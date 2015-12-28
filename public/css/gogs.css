@@ -1902,7 +1902,7 @@ footer .container .links > *:first-child {
   margin-top: -2px;
 }
 .repository.file.list #file-content .view-raw * {
-  width: 100%;
+  max-width: 100%;
 }
 .repository.file.list #file-content .view-raw img {
   padding: 5px 5px 0 5px;
@@ -2992,6 +2992,9 @@ footer .container .links > *:first-child {
 .feeds .news .push.news .content ul .text.truncate {
   width: 80%;
   margin-bottom: -5px;
+}
+.feeds .news .commit-id {
+  font-family: Consolas, monospace;
 }
 .feeds .list .header {
   padding-top: 10px;

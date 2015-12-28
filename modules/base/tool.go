@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Unknwon/com"
 	"github.com/Unknwon/i18n"
@@ -25,6 +26,7 @@ import (
 	"golang.org/x/net/html/charset"
 
 	"github.com/gogits/gogs/modules/avatar"
+	"github.com/gogits/gogs/modules/log"
 	"github.com/gogits/gogs/modules/setting"
 )
 
@@ -52,7 +54,17 @@ func ShortSha(sha1 string) string {
 }
 
 func DetectEncoding(content []byte) string {
-	_, name, _ := charset.DetermineEncoding(content, setting.Repository.AnsiCharset)
+	if utf8.Valid(content[:1024]) {
+		log.Debug("Detected encoding: utf-8 (fast)")
+		return "utf-8"
+	}
+
+	_, name, certain := charset.DetermineEncoding(content, "")
+	if name != "utf-8" && len(setting.Repository.AnsiCharset) > 0 {
+		log.Debug("Using default AnsiCharset: %s", setting.Repository.AnsiCharset)
+		return setting.Repository.AnsiCharset
+	}
+	log.Debug("Detected encoding: %s (%v)", name, certain)
 	return name
 }
 
