@@ -718,6 +718,7 @@
 body {
   font-family: 'Helvetica Neue', Arial, Helvetica, sans-serif, '微软雅黑';
   background-color: #FAFAFA;
+  overflow-y: scroll;
 }
 img {
   border-radius: 3px;
@@ -734,6 +735,11 @@ pre.raw {
   font-size: 13px;
   line-height: 1.5;
   overflow: auto;
+}
+pre.wrap {
+  white-space: pre-wrap;
+  /* CSS 3 */
+  word-break: break-word;
 }
 .full.height {
   padding: 0;
@@ -2300,9 +2306,10 @@ footer .container .links > *:first-child {
 }
 .repository .diff-box .count {
   margin-right: 12px;
+  font-size: 13px;
 }
 .repository .diff-box .count .bar {
-  background-color: #e75316;
+  background-color: #bd2c00;
   height: 12px;
   width: 40px;
   display: inline-block;
@@ -2310,7 +2317,7 @@ footer .container .links > *:first-child {
   vertical-align: text-top;
 }
 .repository .diff-box .count .bar .add {
-  background-color: #77c64a;
+  background-color: #55a532;
   height: 12px;
 }
 .repository .diff-box .file {
@@ -2324,6 +2331,10 @@ footer .container .links > *:first-child {
   color: #A7A7A7;
   background: #fafafa;
   width: 1%;
+}
+.repository .diff-file-box .file-body.file-code .lines-num span.fold {
+  display: block;
+  text-align: center;
 }
 .repository .diff-file-box .file-body.file-code .lines-num-old {
   border-right: 1px solid #DDD;
@@ -2350,15 +2361,38 @@ footer .container .links > *:first-child {
   padding-top: 4px;
   padding-bottom: 4px;
 }
+.repository .diff-file-box .code-diff tbody tr.tag-code td.halfwidth {
+  width: 50%;
+}
+.repository .diff-file-box .code-diff tbody tr.del-code td.add-code {
+  background-color: #eaffea !important;
+  border-color: #c1e9c1 !important;
+}
+.repository .diff-file-box .code-diff tbody tr.del-code td.add-code pre {
+  background-color: #eaffea !important;
+  border-color: #c1e9c1 !important;
+}
 .repository .diff-file-box .code-diff tbody tr.del-code td,
 .repository .diff-file-box .code-diff tbody tr.del-code pre {
   background-color: #ffecec !important;
   border-color: #f1c0c0 !important;
 }
+.repository .diff-file-box .code-diff tbody tr.del-code td.halfwidth {
+  width: 50%;
+}
 .repository .diff-file-box .code-diff tbody tr.add-code td,
 .repository .diff-file-box .code-diff tbody tr.add-code pre {
   background-color: #eaffea !important;
   border-color: #c1e9c1 !important;
+}
+.repository .diff-file-box .code-diff tbody tr.add-code td.halfwidth {
+  width: 50%;
+}
+.repository .diff-file-box .code-diff tbody tr .removed-code {
+  background-color: #ff9999;
+}
+.repository .diff-file-box .code-diff tbody tr .added-code {
+  background-color: #99ff99;
 }
 .repository .diff-file-box.file-content img {
   max-width: 100%;
@@ -3023,6 +3057,18 @@ footer .container .links > *:first-child {
   margin-right: 6px;
   color: #888;
 }
+.feeds .list .repo-owner-name-list .item-name {
+  max-width: 70%;
+  margin-bottom: -4px;
+}
+.feeds .list #collaborative-repo-list .owner-and-repo {
+  max-width: 80%;
+  margin-bottom: -5px;
+}
+.feeds .list #collaborative-repo-list .owner-name {
+  max-width: 120px;
+  margin-bottom: -5px;
+}
 .admin {
   padding-top: 15px;
   padding-bottom: 80px;
@@ -3082,6 +3128,9 @@ footer .container .links > *:first-child {
 .ui.repository.list .item .ui.header {
   font-size: 1.5rem;
   padding-bottom: 10px;
+}
+.ui.repository.list .item .ui.header .name {
+  word-break: break-all;
 }
 .ui.repository.list .item .ui.header .metas {
   color: #888;

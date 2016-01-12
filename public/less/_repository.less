@@ -641,15 +641,17 @@
 	.diff-box {
 		.count {
 			margin-right: 12px;
+			font-size: 13px;
+
 			.bar {
-				background-color: #e75316;
+				background-color: #bd2c00;
 				height: 12px;
 				width: 40px;
 				display: inline-block;
 				margin: 2px 4px 0 4px;
 				vertical-align: text-top;
 				.add {
-					background-color: #77c64a;
+					background-color: #55a532;
 					height: 12px;
 				}
 			}
@@ -668,6 +670,11 @@
 				color: #A7A7A7;
 				background: #fafafa;
 				width: 1%;
+
+				span.fold {
+					display: block;
+					text-align: center;
+				}
 			}
 			.lines-num-old {
 				border-right: 1px solid #DDD;
@@ -698,6 +705,9 @@
 							padding-top: 4px;
 							padding-bottom: 4px;
 						}
+						td.halfwidth {
+							width: 50%;
+						}
 						// td.selected-line, td.selected-line pre {
 						// 	background-color: #ffffdd !important;
 						// }
@@ -708,9 +718,23 @@
 					// 	}
 					// }
 					&.del-code {
+						// Duplicate here to enforce add code color.
+						td.add-code {
+							background-color: #eaffea !important;
+							border-color: #c1e9c1 !important;
+							pre {
+								background-color: #eaffea !important;
+								border-color: #c1e9c1 !important;
+
+							}
+						}
 						td, pre {
 							background-color: #ffecec !important;
 					    border-color: #f1c0c0 !important;
+						}
+
+						td.halfwidth {
+							width: 50%;
 						}
 						// td.selected-line, td.selected-line pre {
 						// 	background-color: #ffffdd !important;
@@ -721,9 +745,19 @@
 							background-color: #eaffea !important;
 							border-color: #c1e9c1 !important;
 						}
+						td.halfwidth {
+							width: 50%;
+						}
 						// td.selected-line, td.selected-line pre {
 						// 	background-color: #ffffdd !important;
 						// }
+					}
+
+					.removed-code {
+					  background-color: #ff9999;
+					}
+					.added-code {
+					  background-color: #99ff99;
 					}
 				}
 			}
@@ -1193,3 +1227,5 @@
 		width: 100%!important;
 	}
 }
+
+
