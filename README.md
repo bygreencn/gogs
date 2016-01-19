@@ -3,7 +3,7 @@ Gogs - Go Git Service [![Build Status](https://travis-ci.org/gogits/gogs.svg?bra
 
 ![](https://github.com/gogits/gogs/blob/master/public/img/gogs-large-resize.png?raw=true)
 
-##### Current version: 0.8.20
+##### Current version: 0.8.22
 
 | Web | UI  | Preview  |
 |:-------------:|:-------:|:-------:|
@@ -103,6 +103,8 @@ There are 5 ways to install Gogs:
 - [Fabric8](http://fabric8.io/) (DevOps)
 - [Taiga](https://taiga.io/) (Project Management)
 - [Puppet](https://forge.puppetlabs.com/Siteminds/gogs) (IT)
+- [Kanboard](http://kanboard.net/plugin/gogs-webhook) (Project Management)
+- [BearyChat](https://bearychat.com/) (Team Communication)
 
 ### Product Support
 
