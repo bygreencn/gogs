@@ -14,10 +14,8 @@ import (
 )
 
 var (
-	ErrOrgNotExist      = errors.New("Organization does not exist")
-	ErrTeamAlreadyExist = errors.New("Team already exist")
-	ErrTeamNotExist     = errors.New("Team does not exist")
-	ErrTeamNameIllegal  = errors.New("Team name contains illegal characters")
+	ErrOrgNotExist  = errors.New("Organization does not exist")
+	ErrTeamNotExist = errors.New("Team does not exist")
 )
 
 // IsOwnedBy returns true if given user is in the owner team.
@@ -255,6 +253,26 @@ func IsPublicMembership(orgId, uid int64) bool {
 	return has
 }
 
+func getPublicOrgsByUserID(sess *xorm.Session, userID int64) ([]*User, error) {
+	orgs := make([]*User, 0, 10)
+	return orgs, sess.Where("`org_user`.uid=?", userID).And("`org_user`.is_public=?", true).
+		Join("INNER", "`org_user`", "`org_user`.org_id=`user`.id").Find(&orgs)
+}
+
+// GetPublicOrgsByUserID returns a list of organizations that the given user ID
+// has joined publicly.
+func GetPublicOrgsByUserID(userID int64) ([]*User, error) {
+	sess := x.NewSession()
+	return getPublicOrgsByUserID(sess, userID)
+}
+
+// GetPublicOrgsByUserID returns a list of organizations that the given user ID
+// has joined publicly, ordered descending by the given condition.
+func GetPublicOrgsByUserIDDesc(userID int64, desc string) ([]*User, error) {
+	sess := x.NewSession()
+	return getPublicOrgsByUserID(sess.Desc(desc), userID)
+}
+
 func getOwnedOrgsByUserID(sess *xorm.Session, userID int64) ([]*User, error) {
 	orgs := make([]*User, 0, 10)
 	return orgs, sess.Where("`org_user`.uid=?", userID).And("`org_user`.is_owner=?", true).
@@ -268,7 +286,7 @@ func GetOwnedOrgsByUserID(userID int64) ([]*User, error) {
 }
 
 // GetOwnedOrganizationsByUserIDDesc returns a list of organizations are owned by
-// given user ID and descring order by given condition.
+// given user ID, ordered descending by the given condition.
 func GetOwnedOrgsByUserIDDesc(userID int64, desc string) ([]*User, error) {
 	sess := x.NewSession()
 	return getOwnedOrgsByUserID(sess.Desc(desc), userID)
@@ -598,9 +616,9 @@ func (t *Team) RemoveRepository(repoID int64) error {
 
 // NewTeam creates a record of new team.
 // It's caller's responsibility to assign organization ID.
-func NewTeam(t *Team) (err error) {
-	if err = IsUsableName(t.Name); err != nil {
-		return err
+func NewTeam(t *Team) error {
+	if len(t.Name) == 0 {
+		return errors.New("empty team name")
 	}
 
 	has, err := x.Id(t.OrgID).Get(new(User))
@@ -615,7 +633,7 @@ func NewTeam(t *Team) (err error) {
 	if err != nil {
 		return err
 	} else if has {
-		return ErrTeamAlreadyExist
+		return ErrTeamAlreadyExist{t.OrgID, t.LowerName}
 	}
 
 	sess := x.NewSession()
@@ -674,8 +692,8 @@ func GetTeamById(teamId int64) (*Team, error) {
 
 // UpdateTeam updates information of team.
 func UpdateTeam(t *Team, authChanged bool) (err error) {
-	if err = IsUsableName(t.Name); err != nil {
-		return err
+	if len(t.Name) == 0 {
+		return errors.New("empty team name")
 	}
 
 	if len(t.Description) > 255 {
@@ -689,6 +707,13 @@ func UpdateTeam(t *Team, authChanged bool) (err error) {
 	}
 
 	t.LowerName = strings.ToLower(t.Name)
+	has, err := x.Where("org_id=?", t.OrgID).And("lower_name=?", t.LowerName).And("id!=?", t.ID).Get(new(Team))
+	if err != nil {
+		return err
+	} else if has {
+		return ErrTeamAlreadyExist{t.OrgID, t.LowerName}
+	}
+
 	if _, err = sess.Id(t.ID).AllCols().Update(t); err != nil {
 		return fmt.Errorf("update: %v", err)
 	}

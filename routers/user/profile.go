@@ -25,7 +25,7 @@ func GetUserByName(ctx *middleware.Context, name string) *models.User {
 	user, err := models.GetUserByName(name)
 	if err != nil {
 		if models.IsErrUserNotExist(err) {
-			ctx.Error(404)
+			ctx.Handle(404, "GetUserByName", nil)
 		} else {
 			ctx.Handle(500, "GetUserByName", err)
 		}
@@ -74,10 +74,10 @@ func Profile(ctx *middleware.Context) {
 	ctx.Data["Title"] = u.DisplayName()
 	ctx.Data["PageIsUserProfile"] = true
 	ctx.Data["Owner"] = u
-	
-	orgs, err := models.GetOwnedOrgsByUserIDDesc(u.Id, "updated")
+
+	orgs, err := models.GetPublicOrgsByUserIDDesc(u.Id, "updated")
 	if err != nil {
-		ctx.Handle(500, "GetOwnedOrgsByUserIDDesc", err)
+		ctx.Handle(500, "GetPublicOrgsByUserIDDesc", err)
 		return
 	}
 	ctx.Data["Orgs"] = orgs

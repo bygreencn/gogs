@@ -21,6 +21,8 @@ import (
 	"github.com/gogits/gogs/modules/setting"
 )
 
+// TODO: put this into 'markdown' module.
+
 func isletter(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
@@ -142,6 +144,16 @@ func (r *CustomRender) AutoLink(out *bytes.Buffer, link []byte, kind int) {
 	r.Renderer.AutoLink(out, link, kind)
 }
 
+func (options *CustomRender) ListItem(out *bytes.Buffer, text []byte, flags int) {
+	switch {
+	case bytes.HasPrefix(text, []byte("[ ] ")):
+		text = append([]byte(`<input type="checkbox" disabled="" />`), text[3:]...)
+	case bytes.HasPrefix(text, []byte("[x] ")):
+		text = append([]byte(`<input type="checkbox" disabled="" checked="" />`), text[3:]...)
+	}
+	options.Renderer.ListItem(out, text, flags)
+}
+
 var (
 	svgSuffix         = []byte(".svg")
 	svgSuffixWithMark = []byte(".svg?")
@@ -177,7 +189,7 @@ func cutoutVerbosePrefix(prefix string) string {
 		if prefix[i] == '/' {
 			count++
 		}
-		if count >= 3 {
+		if count >= 3+setting.AppSubUrlDepth {
 			return prefix[:i]
 		}
 	}
