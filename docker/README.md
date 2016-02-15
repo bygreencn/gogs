@@ -20,6 +20,8 @@ $ docker run --name=gogs -p 10022:22 -p 10080:3000 -v /var/gogs:/data gogs/gogs
 $ docker start gogs
 ```
 
+Note: It is important to map the Gogs ssh service from the container to the host and set the appropriate SSH Port and URI settings when setting up Gogs for the first time. To access and clone Gogs Git repositories with the above configuration you would use: `git clone ssh://git@hostname:10022/username/myrepo.git` for example.
+
 Files will be store in local path `/var/gogs` in my case.
 
 Directory `/var/gogs` keeps Git repositories and Gogs data:
@@ -56,6 +58,8 @@ $ docker run --name=gogs -p 10022:22 -p 10080:3000 -v gogs-data:/data gogs/gogs
 
 ## Settings
 
+### Application
+
 Most of settings are obvious and easy to understand, but there are some settings can be confusing by running Gogs inside Docker:
 
 - **Repository Root Path**: keep it as default value `/home/git/gogs-repositories` because `start.sh` already made a symbolic link for you.
@@ -65,7 +69,11 @@ Most of settings are obvious and easy to understand, but there are some settings
 - **HTTP Port**: Use port you want Gogs to listen on inside Docker container. For example, your Gogs listens on `3000` inside Docker, and you expose it by `10080:3000`, but you still use `3000` for this value.
 - **Application URL**: Use combination of **Domain** and **exposed HTTP Port** values(e.g. `http://192.168.99.100:10080/`).
 
-Full documentation of settings can be found [here](http://gogs.io/docs/advanced/configuration_cheat_sheet.html).
+Full documentation of application settings can be found [here](http://gogs.io/docs/advanced/configuration_cheat_sheet.html).
+
+### Crond
+
+Please set environment variable `RUN_CROND` to be `true` or `1` in order to start `crond` inside the container.
 
 ## Upgrade
 

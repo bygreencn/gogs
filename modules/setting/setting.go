@@ -48,12 +48,13 @@ var (
 	BuildGitHash string
 
 	// App settings
-	AppVer      string
-	AppName     string
-	AppUrl      string
-	AppSubUrl   string
-	AppPath     string
-	AppDataPath = "data"
+	AppVer         string
+	AppName        string
+	AppUrl         string
+	AppSubUrl      string
+	AppSubUrlDepth int // Number of slashes
+	AppPath        string
+	AppDataPath    = "data"
 
 	// Server settings
 	Protocol           Scheme
@@ -113,10 +114,12 @@ var (
 	AdminRepoPagingNum   int
 	AdminNoticePagingNum int
 	AdminOrgPagingNum    int
+	ThemeColorMetaTag    string
 
 	// Markdown sttings
 	Markdown struct {
 		EnableHardLineBreak bool
+		CustomURLSchemes    []string `ini:"CUSTOM_URL_SCHEMES"`
 	}
 
 	// Picture settings
@@ -299,7 +302,9 @@ func NewContext() {
 	if err != nil {
 		log.Fatal(4, "Invalid ROOT_URL '%s': %s", AppUrl, err)
 	}
+	// Suburl should start with '/' and end without '/', such as '/{subpath}'.
 	AppSubUrl = strings.TrimSuffix(url.Path, "/")
+	AppSubUrlDepth = strings.Count(AppSubUrl, "/")
 
 	Protocol = HTTP
 	if sec.Key("PROTOCOL").String() == "https" {
@@ -403,6 +408,7 @@ func NewContext() {
 	AdminRepoPagingNum = sec.Key("REPO_PAGING_NUM").MustInt(50)
 	AdminNoticePagingNum = sec.Key("NOTICE_PAGING_NUM").MustInt(50)
 	AdminOrgPagingNum = sec.Key("ORG_PAGING_NUM").MustInt(50)
+	ThemeColorMetaTag = sec.Key("THEME_COLOR_META_TAG").MustString("#ff5343")
 
 	sec = Cfg.Section("picture")
 	PictureService = sec.Key("SERVICE").In("server", []string{"server"})

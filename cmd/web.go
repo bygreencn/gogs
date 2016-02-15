@@ -89,7 +89,7 @@ func checkVersion() {
 		{"github.com/go-macaron/toolbox", toolbox.Version, "0.1.0"},
 		{"gopkg.in/ini.v1", ini.Version, "1.8.4"},
 		{"gopkg.in/macaron.v1", macaron.Version, "0.8.0"},
-		{"github.com/gogits/git-module", git.Version, "0.2.4"},
+		{"github.com/gogits/git-module", git.Version, "0.2.5"},
 		{"github.com/gogits/go-gogs-client", gogs.Version, "0.7.2"},
 	}
 	for _, c := range checkers {
@@ -350,11 +350,14 @@ func runWeb(ctx *cli.Context) {
 			m.Get("/members/action/:action", org.MembersAction)
 
 			m.Get("/teams", org.Teams)
+		}, middleware.OrgAssignment(true))
+
+		m.Group("/:org", func() {
 			m.Get("/teams/:team", org.TeamMembers)
 			m.Get("/teams/:team/repositories", org.TeamRepositories)
 			m.Route("/teams/:team/action/:action", "GET,POST", org.TeamsAction)
 			m.Route("/teams/:team/action/repo/:action", "GET,POST", org.TeamsRepoAction)
-		}, middleware.OrgAssignment(true))
+		}, middleware.OrgAssignment(true, false, true))
 
 		m.Group("/:org", func() {
 			m.Get("/teams/new", org.NewTeam)
@@ -516,7 +519,7 @@ func runWeb(ctx *cli.Context) {
 			m.Get("/forks", repo.Forks)
 		}, middleware.RepoRef())
 
-		m.Get("/compare/:before([a-z0-9]{40})...:after([a-z0-9]{40})", repo.CompareDiff)
+		m.Get("/compare/:before([a-z0-9]{40})\\.\\.\\.:after([a-z0-9]{40})", repo.CompareDiff)
 	}, ignSignIn, middleware.RepoAssignment(), repo.MustBeNotBare)
 	m.Group("/:username/:reponame", func() {
 		m.Get("/stars", repo.Stars)

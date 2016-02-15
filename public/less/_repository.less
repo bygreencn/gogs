@@ -268,6 +268,10 @@
 			}
 			.content {
 				margin-left: 4em;
+				#avatar-arrow;
+				&:after {
+					border-right-color: #fff;
+				}				
 				.markdown {
 					font-size: 14px;
 				}
@@ -287,7 +291,7 @@
 			padding-bottom: 0!important;
 			h1 {
 				font-weight: 300;
-				font-size: 3rem;
+				font-size: 2.3rem;
 				margin-bottom: 5px;
 				.ui.input	{
 					font-size: 0.5em;
@@ -376,8 +380,10 @@
 				.content {
 					margin-left: 4em;
 					.header {
+						#avatar-arrow;
 						font-weight: normal;
 						padding: auto 15px;
+						position: relative;
 						color: #767676;
 						background-color: #f7f7f7;
 						border-bottom: 1px solid #eee;
@@ -460,6 +466,13 @@
 		.ui.segment.metas {
 			margin-top: -3px;
 		}
+
+		.ui.participants {
+			img {
+				margin-top: 5px;
+				margin-right: 5px;
+			}
+		}
 	}
 	.comment.form {
 		.ui.comments {
@@ -469,6 +482,12 @@
 		.content {
 			.field:first-child {
 				clear: none;
+			}
+			.form {
+				#avatar-arrow;
+				&:after {
+					border-right-color: #fff;
+				}
 			}
 			.tab.segment {
 				border: none;
@@ -567,6 +586,14 @@
 		.choose.branch {
 			.octicon {
 				padding-right: 10px;
+			}
+		}
+		.comment.form {
+			.content {
+				#avatar-arrow;
+				&:after {
+					border-right-color: #fff;
+				}
 			}
 		}
 	}
@@ -1218,6 +1245,29 @@
 				height: 15px;
 			}
 		}
+	}
+}
+
+#avatar-arrow {
+	&:before, &:after {
+		right: 100%;
+		top: 20px;
+		border: solid transparent;
+		content: " ";
+		height: 0;
+		width: 0;
+		position: absolute;
+		pointer-events: none;
+	}
+	&:before {
+		border-right-color: #D4D4D5;
+		border-width: 9px;
+		margin-top: -9px;
+	}	
+	&:after {
+		border-right-color: #f7f7f7;
+		border-width: 8px;
+		margin-top: -8px;
 	}
 }
 

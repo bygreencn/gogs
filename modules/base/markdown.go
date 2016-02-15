@@ -21,6 +21,8 @@ import (
 	"github.com/gogits/gogs/modules/setting"
 )
 
+// TODO: put this into 'markdown' module.
+
 func isletter(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
@@ -29,16 +31,10 @@ func isalnum(c byte) bool {
 	return (c >= '0' && c <= '9') || isletter(c)
 }
 
-var validLinks = [][]byte{[]byte("http://"), []byte("https://"), []byte("ftp://"), []byte("mailto://")}
+var validLinksPattern = regexp.MustCompile(`^[a-z][\w-]+://`)
 
 func isLink(link []byte) bool {
-	for _, prefix := range validLinks {
-		if len(link) > len(prefix) && bytes.Equal(bytes.ToLower(link[:len(prefix)]), prefix) && isalnum(link[len(prefix)]) {
-			return true
-		}
-	}
-
-	return false
+	return validLinksPattern.Match(link)
 }
 
 func IsMarkdownFile(name string) bool {
@@ -155,6 +151,8 @@ func (options *CustomRender) ListItem(out *bytes.Buffer, text []byte, flags int)
 var (
 	svgSuffix         = []byte(".svg")
 	svgSuffixWithMark = []byte(".svg?")
+	spaceBytes        = []byte(" ")
+	spaceEncodedBytes = []byte("%20")
 )
 
 func (r *CustomRender) Image(out *bytes.Buffer, link []byte, title []byte, alt []byte) {
@@ -170,7 +168,8 @@ func (r *CustomRender) Image(out *bytes.Buffer, link []byte, title []byte, alt [
 			if link[0] != '/' {
 				prefix += "/"
 			}
-			link = []byte(prefix + string(link))
+			link = bytes.Replace([]byte((prefix + string(link))), spaceBytes, spaceEncodedBytes, -1)
+			fmt.Println(333, string(link))
 		}
 	}
 
@@ -187,7 +186,7 @@ func cutoutVerbosePrefix(prefix string) string {
 		if prefix[i] == '/' {
 			count++
 		}
-		if count >= 3 {
+		if count >= 3+setting.AppSubUrlDepth {
 			return prefix[:i]
 		}
 	}

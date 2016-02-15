@@ -3,7 +3,7 @@ Gogs - Go Git Service [![Build Status](https://travis-ci.org/gogits/gogs.svg?bra
 
 ![](https://github.com/gogits/gogs/blob/master/public/img/gogs-large-resize.png?raw=true)
 
-##### Current version: 0.8.25
+##### Current version: 0.8.33
 
 | Web | UI  | Preview  |
 |:-------------:|:-------:|:-------:|
@@ -96,6 +96,7 @@ There are 5 ways to install Gogs:
 - [Portal](https://portaldemo.xyz/cloud/)
 - [Sandstorm](https://github.com/cem/gogs-sandstorm)
 - [sloppy.io](https://github.com/sloppyio/quickstarters/tree/master/gogs)
+- [YunoHost](https://github.com/mbugeia/gogs_ynh)
 
 ## Software and Service Support
 
@@ -119,6 +120,7 @@ There are 5 ways to install Gogs:
 - Thanks [lavachen](http://www.lavachen.cn/) and [Rocker](http://weibo.com/rocker1989) for designing Logo.
 - Thanks [Crowdin](https://crowdin.com/project/gogs) for providing open source translation plan.
 - Thanks [DigitalOcean](https://www.digitalocean.com) for hosting home and demo sites.
+- Thanks [KeyCDN](https://www.keycdn.com/) for providing CDN service.
 
 ## Contributors
 
