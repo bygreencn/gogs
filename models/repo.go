@@ -30,9 +30,9 @@ import (
 	"github.com/gogits/git-module"
 	api "github.com/gogits/go-gogs-client"
 
-	"github.com/gogits/gogs/modules/base"
 	"github.com/gogits/gogs/modules/bindata"
 	"github.com/gogits/gogs/modules/log"
+	"github.com/gogits/gogs/modules/markdown"
 	"github.com/gogits/gogs/modules/process"
 	"github.com/gogits/gogs/modules/setting"
 )
@@ -332,7 +332,17 @@ func (repo *Repository) IsOwnedBy(userID int64) bool {
 
 // CanBeForked returns true if repository meets the requirements of being forked.
 func (repo *Repository) CanBeForked() bool {
-	return !repo.IsBare && !repo.IsMirror
+	return !repo.IsBare
+}
+
+// CanEnablePulls returns true if repository meets the requirements of accepting pulls.
+func (repo *Repository) CanEnablePulls() bool {
+	return !repo.IsMirror
+}
+
+// AllowPulls returns true if repository meets the requirements of accepting pulls and has them enabled.
+func (repo *Repository) AllowsPulls() bool {
+	return repo.CanEnablePulls() && repo.EnablePulls
 }
 
 func (repo *Repository) NextIssueIndex() int64 {
@@ -348,7 +358,7 @@ func (repo *Repository) DescriptionHtml() template.HTML {
 	sanitize := func(s string) string {
 		return fmt.Sprintf(`<a href="%[1]s" target="_blank">%[1]s</a>`, s)
 	}
-	return template.HTML(DescPattern.ReplaceAllStringFunc(base.Sanitizer.Sanitize(repo.Description), sanitize))
+	return template.HTML(DescPattern.ReplaceAllStringFunc(markdown.Sanitizer.Sanitize(repo.Description), sanitize))
 }
 
 func (repo *Repository) LocalCopyPath() string {
@@ -414,7 +424,8 @@ func (repo *Repository) ComposePayload() *api.PayloadRepo {
 			Email:    repo.MustOwner().Email,
 			UserName: repo.MustOwner().Name,
 		},
-		Private: repo.IsPrivate,
+		Private:       repo.IsPrivate,
+		DefaultBranch: repo.DefaultBranch,
 	}
 }
 
@@ -591,6 +602,11 @@ func UpdateMirror(m *Mirror) error {
 	return updateMirror(x, m)
 }
 
+func DeleteMirrorByRepoID(repoID int64) error {
+	_, err := x.Delete(&Mirror{RepoID: repoID})
+	return err
+}
+
 func createUpdateHook(repoPath string) error {
 	return git.SetUpdateHook(repoPath,
 		fmt.Sprintf(_TPL_UPDATE_HOOK, setting.ScriptType, "\""+setting.AppPath+"\"", setting.CustomConf))
@@ -654,7 +670,12 @@ func MigrateRepository(u *User, opts MigrateRepoOptions) (*Repository, error) {
 		return repo, UpdateRepository(repo, false)
 	}
 
-	if err = createUpdateHook(repoPath); err != nil {
+	return CleanUpMigrateInfo(repo, repoPath)
+}
+
+// Finish migrating repository with things that don't need to be done for mirrors.
+func CleanUpMigrateInfo(repo *Repository, repoPath string) (*Repository, error) {
+	if err := createUpdateHook(repoPath); err != nil {
 		return repo, fmt.Errorf("createUpdateHook: %v", err)
 	}
 
@@ -1096,11 +1117,13 @@ func TransferOwnership(u *User, newOwnerName string, repo *Repository) error {
 		return fmt.Errorf("transferRepoAction: %v", err)
 	}
 
-	// Change repository directory name.
+	// Rename remote repository to new path and delete local copy.
 	if err = os.Rename(RepoPath(owner.Name, repo.Name), RepoPath(newOwner.Name, repo.Name)); err != nil {
 		return fmt.Errorf("rename repository directory: %v", err)
 	}
+	RemoveAllWithNotice("Delete repository local copy", repo.LocalCopyPath())
 
+	// Rename remote wiki repository to new path and delete local copy.
 	wikiPath := WikiPath(owner.Name, repo.Name)
 	if com.IsExist(wikiPath) {
 		RemoveAllWithNotice("Delete repository wiki local copy", repo.LocalWikiPath())

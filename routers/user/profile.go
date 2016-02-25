@@ -75,18 +75,19 @@ func Profile(ctx *middleware.Context) {
 	ctx.Data["PageIsUserProfile"] = true
 	ctx.Data["Owner"] = u
 
-	orgs, err := models.GetPublicOrgsByUserIDDesc(u.Id, "updated")
+	orgs, err := models.GetOrgsByUserID(u.Id, ctx.IsSigned && (ctx.User.IsAdmin || ctx.User.Id == u.Id))
 	if err != nil {
-		ctx.Handle(500, "GetPublicOrgsByUserIDDesc", err)
+		ctx.Handle(500, "GetOrgsByUserIDDesc", err)
 		return
 	}
+
 	ctx.Data["Orgs"] = orgs
 
 	tab := ctx.Query("tab")
 	ctx.Data["TabName"] = tab
 	switch tab {
 	case "activity":
-		retrieveFeeds(ctx, u.Id, 0, true)
+		retrieveFeeds(ctx, u.Id, -1, 0, true)
 		if ctx.Written() {
 			return
 		}

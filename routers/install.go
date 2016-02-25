@@ -20,11 +20,12 @@ import (
 	"github.com/gogits/git-module"
 
 	"github.com/gogits/gogs/models"
-	"github.com/gogits/gogs/models/cron"
 	"github.com/gogits/gogs/modules/auth"
 	"github.com/gogits/gogs/modules/base"
+	"github.com/gogits/gogs/modules/cron"
 	"github.com/gogits/gogs/modules/log"
 	"github.com/gogits/gogs/modules/mailer"
+	"github.com/gogits/gogs/modules/markdown"
 	"github.com/gogits/gogs/modules/middleware"
 	"github.com/gogits/gogs/modules/setting"
 	"github.com/gogits/gogs/modules/ssh"
@@ -93,7 +94,7 @@ func GlobalInit() {
 	}
 
 	// Build Sanitizer
-	base.BuildSanitizer()
+	markdown.BuildSanitizer()
 }
 
 func InstallInit(ctx *middleware.Context) {

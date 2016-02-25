@@ -34,7 +34,6 @@ import (
 
 	"github.com/gogits/gogs/models"
 	"github.com/gogits/gogs/modules/auth"
-	"github.com/gogits/gogs/modules/avatar"
 	"github.com/gogits/gogs/modules/bindata"
 	"github.com/gogits/gogs/modules/log"
 	"github.com/gogits/gogs/modules/middleware"
@@ -81,7 +80,7 @@ func checkVersion() {
 	// Check dependency version.
 	checkers := []VerChecker{
 		{"github.com/go-xorm/xorm", func() string { return xorm.Version }, "0.4.4.1029"},
-		{"github.com/go-macaron/binding", binding.Version, "0.1.0"},
+		{"github.com/go-macaron/binding", binding.Version, "0.2.1"},
 		{"github.com/go-macaron/cache", cache.Version, "0.1.2"},
 		{"github.com/go-macaron/csrf", csrf.Version, "0.0.3"},
 		{"github.com/go-macaron/i18n", i18n.Version, "0.2.0"},
@@ -89,8 +88,8 @@ func checkVersion() {
 		{"github.com/go-macaron/toolbox", toolbox.Version, "0.1.0"},
 		{"gopkg.in/ini.v1", ini.Version, "1.8.4"},
 		{"gopkg.in/macaron.v1", macaron.Version, "0.8.0"},
-		{"github.com/gogits/git-module", git.Version, "0.2.5"},
-		{"github.com/gogits/go-gogs-client", gogs.Version, "0.7.2"},
+		{"github.com/gogits/git-module", git.Version, "0.2.7"},
+		{"github.com/gogits/go-gogs-client", gogs.Version, "0.7.3"},
 	}
 	for _, c := range checkers {
 		if !version.Compare(c.Version(), c.Expected, ">=") {
@@ -244,11 +243,6 @@ func runWeb(ctx *cli.Context) {
 		m.Get("/logout", user.SignOut)
 	})
 	// ***** END: User *****
-
-	// Gravatar service.
-	avt := avatar.CacheServer("public/img/avatar/", "public/img/avatar_default.jpg")
-	os.MkdirAll("public/img/avatar/", os.ModePerm)
-	m.Get("/avatar/:hash", avt.ServeHTTP)
 
 	adminReq := middleware.Toggle(&middleware.ToggleOptions{SignInRequire: true, AdminRequire: true})
 
@@ -404,7 +398,7 @@ func runWeb(ctx *cli.Context) {
 		m.Group("/settings", func() {
 			m.Combo("").Get(repo.Settings).
 				Post(bindIgnErr(auth.RepoSettingForm{}), repo.SettingsPost)
-			m.Route("/collaboration", "GET,POST", repo.Collaboration)
+			m.Combo("/collaboration").Get(repo.Collaboration).Post(repo.CollaborationPost)
 
 			m.Group("/hooks", func() {
 				m.Get("", repo.Webhooks)
@@ -476,7 +470,7 @@ func runWeb(ctx *cli.Context) {
 			m.Post("/delete", repo.DeleteRelease)
 		}, reqRepoAdmin, middleware.RepoRef())
 
-		m.Combo("/compare/*", repo.MustEnablePulls).Get(repo.CompareAndPullRequest).
+		m.Combo("/compare/*", repo.MustAllowPulls).Get(repo.CompareAndPullRequest).
 			Post(bindIgnErr(auth.CreateIssueForm{}), repo.CompareAndPullRequestPost)
 	}, reqSignIn, middleware.RepoAssignment(), repo.MustBeNotBare)
 
@@ -509,7 +503,7 @@ func runWeb(ctx *cli.Context) {
 			m.Get("/commits", middleware.RepoRef(), repo.ViewPullCommits)
 			m.Get("/files", middleware.RepoRef(), repo.ViewPullFiles)
 			m.Post("/merge", reqRepoAdmin, repo.MergePullRequest)
-		}, repo.MustEnablePulls)
+		}, repo.MustAllowPulls)
 
 		m.Group("", func() {
 			m.Get("/src/*", repo.Home)

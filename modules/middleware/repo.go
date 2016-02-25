@@ -167,7 +167,7 @@ func RepoAssignment(args ...bool) macaron.Handler {
 		ctx.Data["IsRepositoryOwner"] = ctx.Repo.IsOwner()
 		ctx.Data["IsRepositoryAdmin"] = ctx.Repo.IsAdmin()
 		ctx.Data["IsRepositoryPusher"] = ctx.Repo.IsPusher()
-		ctx.Data["CanPullRequest"] = ctx.Repo.IsAdmin() && repo.BaseRepo != nil && repo.BaseRepo.EnablePulls
+		ctx.Data["CanPullRequest"] = ctx.Repo.IsAdmin() && repo.BaseRepo != nil && repo.BaseRepo.AllowsPulls()
 
 		ctx.Data["DisableSSH"] = setting.DisableSSH
 		ctx.Data["CloneLink"] = repo.CloneLink()
@@ -216,7 +216,7 @@ func RepoAssignment(args ...bool) macaron.Handler {
 
 		if ctx.Query("go-get") == "1" {
 			ctx.Data["GoGetImport"] = path.Join(setting.Domain, setting.AppSubUrl, owner.Name, repo.Name)
-			prefix := path.Join(setting.AppUrl, owner.Name, repo.Name, "src", ctx.Repo.BranchName)
+			prefix := setting.AppUrl + path.Join(owner.Name, repo.Name, "src", ctx.Repo.BranchName)
 			ctx.Data["GoDocDirectory"] = prefix + "{/dir}"
 			ctx.Data["GoDocFile"] = prefix + "{/dir}/{file}#L{line}"
 		}

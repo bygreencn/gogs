@@ -22,6 +22,10 @@ build: $(GENERATED)
 govet:
 	go tool vet -composites=false -methods=false -structtags=false .
 
+build-dev: $(GENERATED) govet
+	go install -v -race -tags '$(TAGS)'
+	cp '$(GOPATH)/bin/gogs' .
+
 pack:
 	rm -rf $(RELEASE_GOGS)
 	mkdir -p $(RELEASE_GOGS)
@@ -48,4 +52,4 @@ clean-mac: clean
 	find . -name ".DS_Store" -print0 | xargs -0 rm
 
 test:
-	go test ./...
+	go test -cover -race ./...

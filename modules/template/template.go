@@ -18,6 +18,7 @@ import (
 
 	"github.com/gogits/gogs/models"
 	"github.com/gogits/gogs/modules/base"
+	"github.com/gogits/gogs/modules/markdown"
 	"github.com/gogits/gogs/modules/setting"
 )
 
@@ -108,7 +109,7 @@ func Safe(raw string) template.HTML {
 }
 
 func Str2html(raw string) template.HTML {
-	return template.HTML(base.Sanitizer.Sanitize(raw))
+	return template.HTML(markdown.Sanitizer.Sanitize(raw))
 }
 
 func Range(l int) []int {
@@ -188,7 +189,7 @@ func ReplaceLeft(s, old, new string) string {
 // RenderCommitMessage renders commit message with XSS-safe and special links.
 func RenderCommitMessage(full bool, msg, urlPrefix string, metas map[string]string) template.HTML {
 	cleanMsg := template.HTMLEscapeString(msg)
-	fullMessage := string(base.RenderIssueIndexPattern([]byte(cleanMsg), urlPrefix, metas))
+	fullMessage := string(markdown.RenderIssueIndexPattern([]byte(cleanMsg), urlPrefix, metas))
 	msgLines := strings.Split(strings.TrimSpace(fullMessage), "\n")
 	numLines := len(msgLines)
 	if numLines == 0 {
@@ -228,11 +229,11 @@ type Actioner interface {
 // and returns a icon class name.
 func ActionIcon(opType int) string {
 	switch opType {
-	case 1, 8: // Create, transfer repository
+	case 1, 8: // Create and transfer repository
 		return "repo"
 	case 5, 9: // Commit repository
 		return "git-commit"
-	case 6: // Create issue
+	case 6, 13: // Create and reopen issue
 		return "issue-opened"
 	case 7: // New pull request
 		return "git-pull-request"
@@ -240,6 +241,8 @@ func ActionIcon(opType int) string {
 		return "comment"
 	case 11: // Merge pull request
 		return "git-merge"
+	case 12: // Close issue
+		return "issue-closed"
 	default:
 		return "invalid type"
 	}

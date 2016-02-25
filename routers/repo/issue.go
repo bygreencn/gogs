@@ -7,6 +7,8 @@ package repo
 import (
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,6 +22,7 @@ import (
 	"github.com/gogits/gogs/modules/base"
 	"github.com/gogits/gogs/modules/log"
 	"github.com/gogits/gogs/modules/mailer"
+	"github.com/gogits/gogs/modules/markdown"
 	"github.com/gogits/gogs/modules/middleware"
 	"github.com/gogits/gogs/modules/setting"
 )
@@ -34,11 +37,19 @@ const (
 	MILESTONE      base.TplName = "repo/issue/milestones"
 	MILESTONE_NEW  base.TplName = "repo/issue/milestone_new"
 	MILESTONE_EDIT base.TplName = "repo/issue/milestone_edit"
+
+	ISSUE_TEMPLATE_KEY = "IssueTemplate"
 )
 
 var (
 	ErrFileTypeForbidden = errors.New("File type is not allowed")
 	ErrTooManyFiles      = errors.New("Maximum number of files to upload exceeded")
+
+	IssueTemplateCandidates = []string{
+		"ISSUE_TEMPLATE.md",
+		".gogs/ISSUE_TEMPLATE.md",
+		".github/ISSUE_TEMPLATE.md",
+	}
 )
 
 func MustEnableIssues(ctx *middleware.Context) {
@@ -47,9 +58,9 @@ func MustEnableIssues(ctx *middleware.Context) {
 	}
 }
 
-func MustEnablePulls(ctx *middleware.Context) {
-	if !ctx.Repo.Repository.EnablePulls {
-		ctx.Handle(404, "MustEnablePulls", nil)
+func MustAllowPulls(ctx *middleware.Context) {
+	if !ctx.Repo.Repository.AllowsPulls() {
+		ctx.Handle(404, "MustAllowPulls", nil)
 	}
 
 	ctx.Data["HasForkedRepo"] = ctx.IsSigned && ctx.User.HasForkedRepo(ctx.Repo.Repository.ID)
@@ -71,7 +82,7 @@ func RetrieveLabels(ctx *middleware.Context) {
 func Issues(ctx *middleware.Context) {
 	isPullList := ctx.Params(":type") == "pulls"
 	if isPullList {
-		MustEnablePulls(ctx)
+		MustAllowPulls(ctx)
 		if ctx.Written() {
 			return
 		}
@@ -281,9 +292,47 @@ func RetrieveRepoMetas(ctx *middleware.Context, repo *models.Repository) []*mode
 	return labels
 }
 
+func getFileContentFromDefaultBranch(ctx *middleware.Context, filename string) (string, bool) {
+	var r io.Reader
+	var bytes []byte
+
+	if ctx.Repo.Commit == nil {
+		var err error
+		ctx.Repo.Commit, err = ctx.Repo.GitRepo.GetBranchCommit(ctx.Repo.Repository.DefaultBranch)
+		if err != nil {
+			return "", false
+		}
+	}
+
+	entry, err := ctx.Repo.Commit.GetTreeEntryByPath(filename)
+	if err != nil {
+		return "", false
+	}
+	r, err = entry.Blob().Data()
+	if err != nil {
+		return "", false
+	}
+	bytes, err = ioutil.ReadAll(r)
+	if err != nil {
+		return "", false
+	}
+	return string(bytes), true
+}
+
+func setTemplateIfExists(ctx *middleware.Context, ctxDataKey string, possibleFiles []string) {
+	for _, filename := range possibleFiles {
+		content, found := getFileContentFromDefaultBranch(ctx, filename)
+		if found {
+			ctx.Data[ctxDataKey] = content
+			return
+		}
+	}
+}
+
 func NewIssue(ctx *middleware.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.issues.new")
 	ctx.Data["PageIsIssueList"] = true
+	setTemplateIfExists(ctx, ISSUE_TEMPLATE_KEY, IssueTemplateCandidates)
 	renderAttachmentSettings(ctx)
 
 	RetrieveRepoMetas(ctx, ctx.Repo.Repository)
@@ -352,7 +401,7 @@ func ValidateRepoMetas(ctx *middleware.Context, form auth.CreateIssueForm) ([]in
 
 func notifyWatchersAndMentions(ctx *middleware.Context, issue *models.Issue) {
 	// Update mentions
-	mentions := base.MentionPattern.FindAllString(issue.Content, -1)
+	mentions := markdown.MentionPattern.FindAllString(issue.Content, -1)
 	if len(mentions) > 0 {
 		for i := range mentions {
 			mentions[i] = strings.TrimSpace(mentions[i])[1:]
@@ -531,7 +580,7 @@ func ViewIssue(ctx *middleware.Context) {
 		ctx.Handle(500, "GetPoster", err)
 		return
 	}
-	issue.RenderedContent = string(base.RenderMarkdown([]byte(issue.Content), ctx.Repo.RepoLink,
+	issue.RenderedContent = string(markdown.Render([]byte(issue.Content), ctx.Repo.RepoLink,
 		ctx.Repo.Repository.ComposeMetas()))
 
 	repo := ctx.Repo.Repository
@@ -602,7 +651,7 @@ func ViewIssue(ctx *middleware.Context) {
 	participants[0] = issue.Poster
 	for _, comment = range issue.Comments {
 		if comment.Type == models.COMMENT_TYPE_COMMENT {
-			comment.RenderedContent = string(base.RenderMarkdown([]byte(comment.Content), ctx.Repo.RepoLink,
+			comment.RenderedContent = string(markdown.Render([]byte(comment.Content), ctx.Repo.RepoLink,
 				ctx.Repo.Repository.ComposeMetas()))
 
 			// Check tag.
@@ -705,7 +754,7 @@ func UpdateIssueContent(ctx *middleware.Context) {
 	}
 
 	ctx.JSON(200, map[string]interface{}{
-		"content": string(base.RenderMarkdown([]byte(issue.Content), ctx.Query("context"), ctx.Repo.Repository.ComposeMetas())),
+		"content": string(markdown.Render([]byte(issue.Content), ctx.Query("context"), ctx.Repo.Repository.ComposeMetas())),
 	})
 }
 
@@ -869,7 +918,7 @@ func NewComment(ctx *middleware.Context, form auth.CreateCommentForm) {
 				if err = issue.ChangeStatus(ctx.User, form.Status == "close"); err != nil {
 					log.Error(4, "ChangeStatus: %v", err)
 				} else {
-					log.Trace("Issue[%d] status changed to closed: %v", issue.ID, issue.IsClosed)
+					log.Trace("Issue [%d] status changed to closed: %v", issue.ID, issue.IsClosed)
 				}
 			}
 		}
@@ -942,7 +991,7 @@ func UpdateCommentContent(ctx *middleware.Context) {
 	}
 
 	ctx.JSON(200, map[string]interface{}{
-		"content": string(base.RenderMarkdown([]byte(comment.Content), ctx.Query("context"), ctx.Repo.Repository.ComposeMetas())),
+		"content": string(markdown.Render([]byte(comment.Content), ctx.Query("context"), ctx.Repo.Repository.ComposeMetas())),
 	})
 }
 
@@ -1040,7 +1089,7 @@ func Milestones(ctx *middleware.Context) {
 		return
 	}
 	for _, m := range miles {
-		m.RenderedContent = string(base.RenderMarkdown([]byte(m.Content), ctx.Repo.RepoLink, ctx.Repo.Repository.ComposeMetas()))
+		m.RenderedContent = string(markdown.Render([]byte(m.Content), ctx.Repo.RepoLink, ctx.Repo.Repository.ComposeMetas()))
 		m.CalOpenIssues()
 	}
 	ctx.Data["Milestones"] = miles

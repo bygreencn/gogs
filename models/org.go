@@ -254,24 +254,25 @@ func IsPublicMembership(orgId, uid int64) bool {
 	return has
 }
 
-func getPublicOrgsByUserID(sess *xorm.Session, userID int64) ([]*User, error) {
+func getOrgsByUserID(sess *xorm.Session, userID int64, showAll bool) ([]*User, error) {
 	orgs := make([]*User, 0, 10)
-	return orgs, sess.Where("`org_user`.uid=?", userID).And("`org_user`.is_public=?", true).
+	if !showAll {
+		sess.And("`org_user`.is_public=?", true)
+	}
+	return orgs, sess.And("`org_user`.uid=?", userID).
 		Join("INNER", "`org_user`", "`org_user`.org_id=`user`.id").Find(&orgs)
 }
 
-// GetPublicOrgsByUserID returns a list of organizations that the given user ID
-// has joined publicly.
-func GetPublicOrgsByUserID(userID int64) ([]*User, error) {
-	sess := x.NewSession()
-	return getPublicOrgsByUserID(sess, userID)
+// GetOrgsByUserID returns a list of organizations that the given user ID
+// has joined.
+func GetOrgsByUserID(userID int64, showAll bool) ([]*User, error) {
+	return getOrgsByUserID(x.NewSession(), userID, showAll)
 }
 
-// GetPublicOrgsByUserID returns a list of organizations that the given user ID
-// has joined publicly, ordered descending by the given condition.
-func GetPublicOrgsByUserIDDesc(userID int64, desc string) ([]*User, error) {
-	sess := x.NewSession()
-	return getPublicOrgsByUserID(sess.Desc(desc), userID)
+// GetOrgsByUserIDDesc returns a list of organizations that the given user ID
+// has joined, ordered descending by the given condition.
+func GetOrgsByUserIDDesc(userID int64, desc string, showAll bool) ([]*User, error) {
+	return getOrgsByUserID(x.NewSession().Desc(desc), userID, showAll)
 }
 
 func getOwnedOrgsByUserID(sess *xorm.Session, userID int64) ([]*User, error) {

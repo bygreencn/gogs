@@ -330,7 +330,7 @@ func NewPullRequest(repo *Repository, pull *Issue, labelIDs []int64, uuids []str
 		ActUserID:    pull.Poster.Id,
 		ActUserName:  pull.Poster.Name,
 		ActEmail:     pull.Poster.Email,
-		OpType:       CREATE_PULL_REQUEST,
+		OpType:       ACTION_CREATE_PULL_REQUEST,
 		Content:      fmt.Sprintf("%d|%s", pull.Index, pull.Name),
 		RepoID:       repo.ID,
 		RepoUserName: repo.Owner.Name,
@@ -482,6 +482,33 @@ func (pr *PullRequest) UpdatePatch() (err error) {
 	return nil
 }
 
+// PushToBaseRepo pushes commits from branches of head repository to
+// corresponding branches of base repository.
+// FIXME: could fail after user force push head repo, should we always force push here?
+// FIXME: Only push branches that are actually updates?
+func (pr *PullRequest) PushToBaseRepo() (err error) {
+	log.Trace("PushToBaseRepo[%[1]d]: pushing commits to base repo 'refs/pull/%[1]d/head'", pr.ID)
+
+	headRepoPath := pr.HeadRepo.RepoPath()
+	headGitRepo, err := git.OpenRepository(headRepoPath)
+	if err != nil {
+		return fmt.Errorf("OpenRepository: %v", err)
+	}
+
+	tmpRemoteName := fmt.Sprintf("tmp-pull-%d", pr.ID)
+	if err = headGitRepo.AddRemote(tmpRemoteName, pr.BaseRepo.RepoPath(), false); err != nil {
+		return fmt.Errorf("headGitRepo.AddRemote: %v", err)
+	}
+	// Make sure to remove the remote even if the push fails
+	defer headGitRepo.RemoveRemote(tmpRemoteName)
+
+	if err = git.Push(headRepoPath, tmpRemoteName, fmt.Sprintf("%s:refs/pull/%d/head", pr.HeadBranch, pr.Index)); err != nil {
+		return fmt.Errorf("Push: %v", err)
+	}
+
+	return nil
+}
+
 // AddToTaskQueue adds itself to pull request test task queue.
 func (pr *PullRequest) AddToTaskQueue() {
 	go PullRequestQueue.AddFunc(pr.ID, func() {
@@ -497,6 +524,9 @@ func addHeadRepoTasks(prs []*PullRequest) {
 		log.Trace("addHeadRepoTasks[%d]: composing new test task", pr.ID)
 		if err := pr.UpdatePatch(); err != nil {
 			log.Error(4, "UpdatePatch: %v", err)
+			continue
+		} else if err := pr.PushToBaseRepo(); err != nil {
+			log.Error(4, "PushToBaseRepo: %v", err)
 			continue
 		}
 

@@ -141,6 +141,36 @@ func SettingsPost(ctx *middleware.Context, form auth.RepoSettingForm) {
 		ctx.Flash.Success(ctx.Tr("repo.settings.update_settings_success"))
 		ctx.Redirect(ctx.Repo.RepoLink + "/settings")
 
+	case "convert":
+		if repo.Name != form.RepoName {
+			ctx.RenderWithErr(ctx.Tr("form.enterred_invalid_repo_name"), SETTINGS_OPTIONS, nil)
+			return
+		}
+
+		if ctx.Repo.Owner.IsOrganization() {
+			if !ctx.Repo.Owner.IsOwnedBy(ctx.User.Id) {
+				ctx.Error(404)
+				return
+			}
+		}
+
+		if !repo.IsMirror {
+			ctx.Error(404)
+			return
+		}
+		repo.IsMirror = false
+
+		if _, err := models.CleanUpMigrateInfo(repo, models.RepoPath(ctx.Repo.Owner.Name, repo.Name)); err != nil {
+			ctx.Handle(500, "CleanUpMigrateInfo", err)
+			return
+		} else if err = models.DeleteMirrorByRepoID(ctx.Repo.Repository.ID); err != nil {
+			ctx.Handle(500, "DeleteMirrorByRepoID", err)
+			return
+		}
+		log.Trace("Repository converted from mirror to regular: %s/%s", ctx.Repo.Owner.Name, repo.Name)
+		ctx.Flash.Success(ctx.Tr("repo.settings.convert_succeed"))
+		ctx.Redirect(setting.AppSubUrl + "/" + ctx.Repo.Owner.Name + "/" + repo.Name)
+
 	case "transfer":
 		if repo.Name != form.RepoName {
 			ctx.RenderWithErr(ctx.Tr("form.enterred_invalid_repo_name"), SETTINGS_OPTIONS, nil)
@@ -203,48 +233,6 @@ func Collaboration(ctx *middleware.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.settings")
 	ctx.Data["PageIsSettingsCollaboration"] = true
 
-	if ctx.Req.Method == "POST" {
-		name := strings.ToLower(ctx.Query("collaborator"))
-		if len(name) == 0 || ctx.Repo.Owner.LowerName == name {
-			ctx.Redirect(setting.AppSubUrl + ctx.Req.URL.Path)
-			return
-		}
-
-		u, err := models.GetUserByName(name)
-		if err != nil {
-			if models.IsErrUserNotExist(err) {
-				ctx.Flash.Error(ctx.Tr("form.user_not_exist"))
-				ctx.Redirect(setting.AppSubUrl + ctx.Req.URL.Path)
-			} else {
-				ctx.Handle(500, "GetUserByName", err)
-			}
-			return
-		}
-
-		// Check if user is organization member.
-		if ctx.Repo.Owner.IsOrganization() && ctx.Repo.Owner.IsOrgMember(u.Id) {
-			ctx.Flash.Info(ctx.Tr("repo.settings.user_is_org_member"))
-			ctx.Redirect(ctx.Repo.RepoLink + "/settings/collaboration")
-			return
-		}
-
-		if err = ctx.Repo.Repository.AddCollaborator(u); err != nil {
-			ctx.Handle(500, "AddCollaborator", err)
-			return
-		}
-
-		if setting.Service.EnableNotifyMail {
-			if err = mailer.SendCollaboratorMail(ctx.Render, u, ctx.User, ctx.Repo.Repository); err != nil {
-				ctx.Handle(500, "SendCollaboratorMail", err)
-				return
-			}
-		}
-
-		ctx.Flash.Success(ctx.Tr("repo.settings.add_collaborator_success"))
-		ctx.Redirect(setting.AppSubUrl + ctx.Req.URL.Path)
-		return
-	}
-
 	// Delete collaborator.
 	remove := strings.ToLower(ctx.Query("remove"))
 	if len(remove) > 0 && remove != ctx.Repo.Owner.LowerName {
@@ -270,6 +258,54 @@ func Collaboration(ctx *middleware.Context) {
 
 	ctx.Data["Collaborators"] = users
 	ctx.HTML(200, COLLABORATION)
+}
+
+func CollaborationPost(ctx *middleware.Context) {
+	name := strings.ToLower(ctx.Query("collaborator"))
+	if len(name) == 0 || ctx.Repo.Owner.LowerName == name {
+		ctx.Redirect(setting.AppSubUrl + ctx.Req.URL.Path)
+		return
+	}
+
+	u, err := models.GetUserByName(name)
+	if err != nil {
+		if models.IsErrUserNotExist(err) {
+			ctx.Flash.Error(ctx.Tr("form.user_not_exist"))
+			ctx.Redirect(setting.AppSubUrl + ctx.Req.URL.Path)
+		} else {
+			ctx.Handle(500, "GetUserByName", err)
+		}
+		return
+	}
+
+	// Organization is not allowed to be added as a collaborator.
+	if u.IsOrganization() {
+		ctx.Flash.Error(ctx.Tr("repo.settings.org_not_allowed_to_be_collaborator"))
+		ctx.Redirect(setting.AppSubUrl + ctx.Req.URL.Path)
+		return
+	}
+
+	// Check if user is organization member.
+	if ctx.Repo.Owner.IsOrganization() && ctx.Repo.Owner.IsOrgMember(u.Id) {
+		ctx.Flash.Info(ctx.Tr("repo.settings.user_is_org_member"))
+		ctx.Redirect(ctx.Repo.RepoLink + "/settings/collaboration")
+		return
+	}
+
+	if err = ctx.Repo.Repository.AddCollaborator(u); err != nil {
+		ctx.Handle(500, "AddCollaborator", err)
+		return
+	}
+
+	if setting.Service.EnableNotifyMail {
+		if err = mailer.SendCollaboratorMail(ctx.Render, u, ctx.User, ctx.Repo.Repository); err != nil {
+			ctx.Handle(500, "SendCollaboratorMail", err)
+			return
+		}
+	}
+
+	ctx.Flash.Success(ctx.Tr("repo.settings.add_collaborator_success"))
+	ctx.Redirect(setting.AppSubUrl + ctx.Req.URL.Path)
 }
 
 func parseOwnerAndRepo(ctx *middleware.Context) (*models.User, *models.Repository) {
