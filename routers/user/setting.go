@@ -39,12 +39,13 @@ func Settings(ctx *middleware.Context) {
 	ctx.HTML(200, SETTINGS_PROFILE)
 }
 
-func handlerUsernameChange(ctx *middleware.Context, newName string) {
+func handleUsernameChange(ctx *middleware.Context, newName string) {
+	// Non-local users are not allowed to change their username.
 	if len(newName) == 0 || !ctx.User.IsLocal() {
 		return
 	}
 
-	// Check if user name has been changed.
+	// Check if user name has been changed
 	if ctx.User.LowerName != strings.ToLower(newName) {
 		if err := models.ChangeUserName(ctx.User, newName); err != nil {
 			switch {
@@ -67,7 +68,8 @@ func handlerUsernameChange(ctx *middleware.Context, newName string) {
 		}
 		log.Trace("User name changed: %s -> %s", ctx.User.Name, newName)
 	}
-	// In case it's just a case change.
+
+	// In case it's just a case change
 	ctx.User.Name = newName
 	ctx.User.LowerName = strings.ToLower(newName)
 }
@@ -81,7 +83,7 @@ func SettingsPost(ctx *middleware.Context, form auth.UpdateProfileForm) {
 		return
 	}
 
-	handlerUsernameChange(ctx, form.Name)
+	handleUsernameChange(ctx, form.Name)
 	if ctx.Written() {
 		return
 	}
@@ -98,7 +100,8 @@ func SettingsPost(ctx *middleware.Context, form auth.UpdateProfileForm) {
 		ctx.Handle(500, "UpdateUser", err)
 		return
 	}
-	log.Trace("User setting updated: %s", ctx.User.Name)
+
+	log.Trace("User settings updated: %s", ctx.User.Name)
 	ctx.Flash.Success(ctx.Tr("settings.update_profile_success"))
 	ctx.Redirect(setting.AppSubUrl + "/user/settings")
 }
@@ -112,10 +115,11 @@ func UpdateAvatarSetting(ctx *middleware.Context, form auth.UploadAvatarForm, ct
 		if err != nil {
 			return fmt.Errorf("Avatar.Open: %v", err)
 		}
+		defer fr.Close()
 
 		data, err := ioutil.ReadAll(fr)
 		if err != nil {
-			return fmt.Errorf("ReadAll: %v", err)
+			return fmt.Errorf("ioutil.ReadAll: %v", err)
 		}
 		if _, ok := base.IsImageFile(data); !ok {
 			return errors.New(ctx.Tr("settings.uploaded_avatar_not_a_image"))
@@ -124,9 +128,12 @@ func UpdateAvatarSetting(ctx *middleware.Context, form auth.UploadAvatarForm, ct
 			return fmt.Errorf("UploadAvatar: %v", err)
 		}
 	} else {
-		// In case no avatar at all.
-		if form.Enable && !com.IsFile(ctx.User.CustomAvatarPath()) {
-			return errors.New(ctx.Tr("settings.no_custom_avatar_available"))
+		// No avatar is uploaded but setting has been changed to enable,
+		// generate a random one when needed.
+		if form.Enable && !com.IsFile(ctxUser.CustomAvatarPath()) {
+			if err := ctxUser.GenerateRandomAvatar(); err != nil {
+				log.Error(4, "GenerateRandomAvatar[%d]: %v", ctxUser.Id, err)
+			}
 		}
 	}
 
@@ -142,6 +149,14 @@ func SettingsAvatar(ctx *middleware.Context, form auth.UploadAvatarForm) {
 		ctx.Flash.Error(err.Error())
 	} else {
 		ctx.Flash.Success(ctx.Tr("settings.update_avatar_success"))
+	}
+
+	ctx.Redirect(setting.AppSubUrl + "/user/settings")
+}
+
+func SettingsDeleteAvatar(ctx *middleware.Context) {
+	if err := ctx.User.DeleteAvatar(); err != nil {
+		ctx.Flash.Error(err.Error())
 	}
 
 	ctx.Redirect(setting.AppSubUrl + "/user/settings")

@@ -41,6 +41,8 @@ const (
 	ACTION_MERGE_PULL_REQUEST                        // 11
 	ACTION_CLOSE_ISSUE                               // 12
 	ACTION_REOPEN_ISSUE                              // 13
+	ACTION_CLOSE_PULL_REQUEST                        // 14
+	ACTION_REOPEN_PULL_REQUEST                       // 15
 )
 
 var (
@@ -368,7 +370,7 @@ func updateIssuesCommit(u *User, repo *Repository, repoUserName, repoName string
 				continue
 			}
 
-			if err = issue.ChangeStatus(u, true); err != nil {
+			if err = issue.ChangeStatus(u, repo, true); err != nil {
 				return err
 			}
 		}
@@ -408,7 +410,7 @@ func updateIssuesCommit(u *User, repo *Repository, repoUserName, repoName string
 				continue
 			}
 
-			if err = issue.ChangeStatus(u, false); err != nil {
+			if err = issue.ChangeStatus(u, repo, false); err != nil {
 				return err
 			}
 		}

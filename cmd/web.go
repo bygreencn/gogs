@@ -7,7 +7,6 @@ package cmd
 import (
 	"crypto/tls"
 	"fmt"
-	gotmpl "html/template"
 	"io/ioutil"
 	"net/http"
 	"net/http/fcgi"
@@ -79,16 +78,16 @@ func checkVersion() {
 
 	// Check dependency version.
 	checkers := []VerChecker{
-		{"github.com/go-xorm/xorm", func() string { return xorm.Version }, "0.4.4.1029"},
+		{"github.com/go-xorm/xorm", func() string { return xorm.Version }, "0.5.2.0304"},
 		{"github.com/go-macaron/binding", binding.Version, "0.2.1"},
 		{"github.com/go-macaron/cache", cache.Version, "0.1.2"},
-		{"github.com/go-macaron/csrf", csrf.Version, "0.0.3"},
+		{"github.com/go-macaron/csrf", csrf.Version, "0.0.5"},
 		{"github.com/go-macaron/i18n", i18n.Version, "0.2.0"},
 		{"github.com/go-macaron/session", session.Version, "0.1.6"},
 		{"github.com/go-macaron/toolbox", toolbox.Version, "0.1.0"},
 		{"gopkg.in/ini.v1", ini.Version, "1.8.4"},
 		{"gopkg.in/macaron.v1", macaron.Version, "0.8.0"},
-		{"github.com/gogits/git-module", git.Version, "0.2.7"},
+		{"github.com/gogits/git-module", git.Version, "0.2.9"},
 		{"github.com/gogits/go-gogs-client", gogs.Version, "0.7.3"},
 	}
 	for _, c := range checkers {
@@ -126,7 +125,7 @@ func newMacaron() *macaron.Macaron {
 	))
 	m.Use(macaron.Renderer(macaron.RenderOptions{
 		Directory:  path.Join(setting.StaticRootPath, "templates"),
-		Funcs:      []gotmpl.FuncMap{template.Funcs},
+		Funcs:      template.NewFuncMap(),
 		IndentJSON: macaron.Env != macaron.PROD,
 	}))
 
@@ -190,6 +189,8 @@ func runWeb(ctx *cli.Context) {
 
 	bindIgnErr := binding.BindIgnErr
 
+	// FIXME: not all routes need go through same middlewares.
+	// Especially some AJAX requests, we can reduce middleware number to improve performance.
 	// Routers.
 	m.Get("/", ignSignIn, routers.Home)
 	m.Get("/explore", ignSignIn, routers.Explore)
@@ -217,6 +218,7 @@ func runWeb(ctx *cli.Context) {
 		m.Get("", user.Settings)
 		m.Post("", bindIgnErr(auth.UpdateProfileForm{}), user.SettingsPost)
 		m.Post("/avatar", binding.MultipartForm(auth.UploadAvatarForm{}), user.SettingsAvatar)
+		m.Post("/avatar/delete", user.SettingsDeleteAvatar)
 		m.Combo("/email").Get(user.SettingsEmails).
 			Post(bindIgnErr(auth.AddEmailForm{}), user.SettingsEmailPost)
 		m.Post("/email/delete", user.DeleteEmail)
@@ -250,6 +252,7 @@ func runWeb(ctx *cli.Context) {
 	m.Group("/admin", func() {
 		m.Get("", adminReq, admin.Dashboard)
 		m.Get("/config", admin.Config)
+		m.Post("/config/test_mail", admin.SendTestMail)
 		m.Get("/monitor", admin.Monitor)
 
 		m.Group("/users", func() {
@@ -330,7 +333,7 @@ func runWeb(ctx *cli.Context) {
 	}
 
 	reqRepoAdmin := middleware.RequireRepoAdmin()
-	reqRepoPusher := middleware.RequireRepoPusher()
+	reqRepoWriter := middleware.RequireRepoWriter()
 
 	// ***** START: Organization *****
 	m.Group("/org", func() {
@@ -364,6 +367,7 @@ func runWeb(ctx *cli.Context) {
 				m.Combo("").Get(org.Settings).
 					Post(bindIgnErr(auth.UpdateOrgSettingForm{}), org.SettingsPost)
 				m.Post("/avatar", binding.MultipartForm(auth.UploadAvatarForm{}), org.SettingsAvatar)
+				m.Post("/avatar/delete", org.SettingsDeleteAvatar)
 
 				m.Group("/hooks", func() {
 					m.Get("", org.Webhooks)
@@ -398,7 +402,11 @@ func runWeb(ctx *cli.Context) {
 		m.Group("/settings", func() {
 			m.Combo("").Get(repo.Settings).
 				Post(bindIgnErr(auth.RepoSettingForm{}), repo.SettingsPost)
-			m.Combo("/collaboration").Get(repo.Collaboration).Post(repo.CollaborationPost)
+			m.Group("/collaboration", func() {
+				m.Combo("").Get(repo.Collaboration).Post(repo.CollaborationPost)
+				m.Post("/access_mode", repo.ChangeCollaborationAccessMode)
+				m.Post("/delete", repo.DeleteCollaboration)
+			})
 
 			m.Group("/hooks", func() {
 				m.Get("", repo.Webhooks)
@@ -440,7 +448,7 @@ func runWeb(ctx *cli.Context) {
 				m.Post("/label", repo.UpdateIssueLabel)
 				m.Post("/milestone", repo.UpdateIssueMilestone)
 				m.Post("/assignee", repo.UpdateIssueAssignee)
-			}, reqRepoAdmin)
+			}, reqRepoWriter)
 
 			m.Group("/:index", func() {
 				m.Post("/title", repo.UpdateIssueTitle)
@@ -452,7 +460,7 @@ func runWeb(ctx *cli.Context) {
 			m.Post("/new", bindIgnErr(auth.CreateLabelForm{}), repo.NewLabel)
 			m.Post("/edit", bindIgnErr(auth.CreateLabelForm{}), repo.UpdateLabel)
 			m.Post("/delete", repo.DeleteLabel)
-		}, reqRepoAdmin, middleware.RepoRef())
+		}, reqRepoWriter, middleware.RepoRef())
 		m.Group("/milestones", func() {
 			m.Combo("/new").Get(repo.NewMilestone).
 				Post(bindIgnErr(auth.CreateMilestoneForm{}), repo.NewMilestonePost)
@@ -460,7 +468,7 @@ func runWeb(ctx *cli.Context) {
 			m.Post("/:id/edit", bindIgnErr(auth.CreateMilestoneForm{}), repo.EditMilestonePost)
 			m.Get("/:id/:action", repo.ChangeMilestonStatus)
 			m.Post("/delete", repo.DeleteMilestone)
-		}, reqRepoAdmin, middleware.RepoRef())
+		}, reqRepoWriter, middleware.RepoRef())
 
 		m.Group("/releases", func() {
 			m.Get("/new", repo.NewRelease)
@@ -468,7 +476,7 @@ func runWeb(ctx *cli.Context) {
 			m.Get("/edit/:tagname", repo.EditRelease)
 			m.Post("/edit/:tagname", bindIgnErr(auth.EditReleaseForm{}), repo.EditReleasePost)
 			m.Post("/delete", repo.DeleteRelease)
-		}, reqRepoAdmin, middleware.RepoRef())
+		}, reqRepoWriter, middleware.RepoRef())
 
 		m.Combo("/compare/*", repo.MustAllowPulls).Get(repo.CompareAndPullRequest).
 			Post(bindIgnErr(auth.CreateIssueForm{}), repo.CompareAndPullRequestPost)
@@ -494,7 +502,8 @@ func runWeb(ctx *cli.Context) {
 					Post(bindIgnErr(auth.NewWikiForm{}), repo.NewWikiPost)
 				m.Combo("/:page/_edit").Get(repo.EditWiki).
 					Post(bindIgnErr(auth.NewWikiForm{}), repo.EditWikiPost)
-			}, reqSignIn, reqRepoPusher)
+				m.Post("/:page/delete", repo.DeleteWikiPagePost)
+			}, reqSignIn, reqRepoWriter)
 		}, repo.MustEnableWiki, middleware.RepoRef())
 
 		m.Get("/archive/*", repo.Download)
@@ -502,7 +511,7 @@ func runWeb(ctx *cli.Context) {
 		m.Group("/pulls/:index", func() {
 			m.Get("/commits", middleware.RepoRef(), repo.ViewPullCommits)
 			m.Get("/files", middleware.RepoRef(), repo.ViewPullFiles)
-			m.Post("/merge", reqRepoAdmin, repo.MergePullRequest)
+			m.Post("/merge", reqRepoWriter, repo.MergePullRequest)
 		}, repo.MustAllowPulls)
 
 		m.Group("", func() {

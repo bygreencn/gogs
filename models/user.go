@@ -346,23 +346,34 @@ func (u *User) UploadAvatar(data []byte) error {
 	return sess.Commit()
 }
 
+// DeleteAvatar deletes the user's custom avatar.
+func (u *User) DeleteAvatar() error {
+	log.Trace("DeleteAvatar[%d]: %s", u.Id, u.CustomAvatarPath())
+	os.Remove(u.CustomAvatarPath())
+
+	u.UseCustomAvatar = false
+	if err := UpdateUser(u); err != nil {
+		return fmt.Errorf("UpdateUser: %v", err)
+	}
+	return nil
+}
+
 // IsAdminOfRepo returns true if user has admin or higher access of repository.
 func (u *User) IsAdminOfRepo(repo *Repository) bool {
-	if err := repo.GetOwner(); err != nil {
-		log.Error(3, "GetOwner: %v", err)
-		return false
+	has, err := HasAccess(u, repo, ACCESS_MODE_ADMIN)
+	if err != nil {
+		log.Error(3, "HasAccess: %v", err)
 	}
+	return has
+}
 
-	if repo.Owner.IsOrganization() {
-		has, err := HasAccess(u, repo, ACCESS_MODE_ADMIN)
-		if err != nil {
-			log.Error(3, "HasAccess: %v", err)
-			return false
-		}
-		return has
+// IsWriterOfRepo returns true if user has write access to given repository.
+func (u *User) IsWriterOfRepo(repo *Repository) bool {
+	has, err := HasAccess(u, repo, ACCESS_MODE_WRITE)
+	if err != nil {
+		log.Error(3, "HasAccess: %v", err)
 	}
-
-	return repo.IsOwnedBy(u.Id)
+	return has
 }
 
 // IsOrganization returns true if user is actually a organization.
@@ -614,7 +625,7 @@ func ChangeUserName(u *User, newUserName string) (err error) {
 }
 
 func updateUser(e Engine, u *User) error {
-	// Organization does not need e-mail.
+	// Organization does not need email
 	if !u.IsOrganization() {
 		u.Email = strings.ToLower(u.Email)
 		has, err := e.Where("id!=?", u.Id).And("type=?", u.Type).And("email=?", u.Email).Get(new(User))
@@ -631,16 +642,9 @@ func updateUser(e Engine, u *User) error {
 	}
 
 	u.LowerName = strings.ToLower(u.Name)
-
-	if len(u.Location) > 255 {
-		u.Location = u.Location[:255]
-	}
-	if len(u.Website) > 255 {
-		u.Website = u.Website[:255]
-	}
-	if len(u.Description) > 255 {
-		u.Description = u.Description[:255]
-	}
+	u.Location = base.TruncateString(u.Location, 255)
+	u.Website = base.TruncateString(u.Website, 255)
+	u.Description = base.TruncateString(u.Description, 255)
 
 	u.FullName = markdown.Sanitizer.Sanitize(u.FullName)
 	_, err := e.Id(u.Id).AllCols().Update(u)

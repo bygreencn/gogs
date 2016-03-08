@@ -138,7 +138,7 @@ func (pr *PullRequest) Merge(doer *User, baseGitRepo *git.Repository) (err error
 		return err
 	}
 
-	if err = pr.Issue.changeStatus(sess, doer, true); err != nil {
+	if err = pr.Issue.changeStatus(sess, doer, pr.Issue.Repo, true); err != nil {
 		return fmt.Errorf("Issue.changeStatus: %v", err)
 	}
 
@@ -484,10 +484,9 @@ func (pr *PullRequest) UpdatePatch() (err error) {
 
 // PushToBaseRepo pushes commits from branches of head repository to
 // corresponding branches of base repository.
-// FIXME: could fail after user force push head repo, should we always force push here?
 // FIXME: Only push branches that are actually updates?
 func (pr *PullRequest) PushToBaseRepo() (err error) {
-	log.Trace("PushToBaseRepo[%[1]d]: pushing commits to base repo 'refs/pull/%[1]d/head'", pr.ID)
+	log.Trace("PushToBaseRepo[%d]: pushing commits to base repo 'refs/pull/%d/head'", pr.BaseRepoID, pr.Index)
 
 	headRepoPath := pr.HeadRepo.RepoPath()
 	headGitRepo, err := git.OpenRepository(headRepoPath)
@@ -502,7 +501,12 @@ func (pr *PullRequest) PushToBaseRepo() (err error) {
 	// Make sure to remove the remote even if the push fails
 	defer headGitRepo.RemoveRemote(tmpRemoteName)
 
-	if err = git.Push(headRepoPath, tmpRemoteName, fmt.Sprintf("%s:refs/pull/%d/head", pr.HeadBranch, pr.Index)); err != nil {
+	headFile := fmt.Sprintf("refs/pull/%d/head", pr.Index)
+
+	// Remove head in case there is a conflict.
+	os.Remove(path.Join(pr.BaseRepo.RepoPath(), headFile))
+
+	if err = git.Push(headRepoPath, tmpRemoteName, fmt.Sprintf("%s:%s", pr.HeadBranch, headFile)); err != nil {
 		return fmt.Errorf("Push: %v", err)
 	}
 

@@ -414,9 +414,15 @@ func MergePullRequest(ctx *middleware.Context) {
 }
 
 func ParseCompareInfo(ctx *middleware.Context) (*models.User, *models.Repository, *git.Repository, *git.PullRequestInfo, string, string) {
-	// Get compare branch information.
+	baseRepo := ctx.Repo.Repository
+
+	// Get compared branches information
+	// format: <base branch>...[<head repo>:]<head branch>
+	// base<-head: master...head:feature
+	// same repo: master...feature
 	infos := strings.Split(ctx.Params("*"), "...")
 	if len(infos) != 2 {
+		log.Trace("ParseCompareInfo[%d]: not enough compared branches information %s", baseRepo.ID, infos)
 		ctx.Handle(404, "CompareAndPullRequest", nil)
 		return nil, nil, nil, nil, "", ""
 	}
@@ -424,27 +430,39 @@ func ParseCompareInfo(ctx *middleware.Context) (*models.User, *models.Repository
 	baseBranch := infos[0]
 	ctx.Data["BaseBranch"] = baseBranch
 
+	var (
+		headUser   *models.User
+		headBranch string
+		isSameRepo bool
+		err        error
+	)
+
+	// If there is no head repository, it means pull request between same repository.
 	headInfos := strings.Split(infos[1], ":")
-	if len(headInfos) != 2 {
+	if len(headInfos) == 1 {
+		isSameRepo = true
+		headUser = ctx.Repo.Owner
+		headBranch = headInfos[0]
+
+	} else if len(headInfos) == 2 {
+		headUser, err = models.GetUserByName(headInfos[0])
+		if err != nil {
+			if models.IsErrUserNotExist(err) {
+				ctx.Handle(404, "GetUserByName", nil)
+			} else {
+				ctx.Handle(500, "GetUserByName", err)
+			}
+			return nil, nil, nil, nil, "", ""
+		}
+		headBranch = headInfos[1]
+
+	} else {
 		ctx.Handle(404, "CompareAndPullRequest", nil)
 		return nil, nil, nil, nil, "", ""
 	}
-	headUsername := headInfos[0]
-	headBranch := headInfos[1]
-	ctx.Data["HeadBranch"] = headBranch
-
-	headUser, err := models.GetUserByName(headUsername)
-	if err != nil {
-		if models.IsErrUserNotExist(err) {
-			ctx.Handle(404, "GetUserByName", nil)
-		} else {
-			ctx.Handle(500, "GetUserByName", err)
-		}
-		return nil, nil, nil, nil, "", ""
-	}
 	ctx.Data["HeadUser"] = headUser
-
-	repo := ctx.Repo.Repository
+	ctx.Data["HeadBranch"] = headBranch
+	ctx.Data["IsBetweenBranches"] = isSameRepo
 
 	// Check if base branch is valid.
 	if !ctx.Repo.GitRepo.IsBranchExist(baseBranch) {
@@ -452,16 +470,29 @@ func ParseCompareInfo(ctx *middleware.Context) (*models.User, *models.Repository
 		return nil, nil, nil, nil, "", ""
 	}
 
-	// Check if current user has fork of repository.
-	headRepo, has := models.HasForkedRepo(headUser.Id, repo.ID)
-	if !has || (!ctx.User.IsAdminOfRepo(headRepo) && !ctx.User.IsAdmin) {
-		ctx.Handle(404, "HasForkedRepo", nil)
+	// Check if current user has fork of repository or in the same repository.
+	headRepo, has := models.HasForkedRepo(headUser.Id, baseRepo.ID)
+	if !has && !isSameRepo {
+		log.Trace("ParseCompareInfo[%d]: does not have fork or in same repository", baseRepo.ID)
+		ctx.Handle(404, "ParseCompareInfo", nil)
 		return nil, nil, nil, nil, "", ""
 	}
 
-	headGitRepo, err := git.OpenRepository(models.RepoPath(headUser.Name, headRepo.Name))
-	if err != nil {
-		ctx.Handle(500, "OpenRepository", err)
+	var headGitRepo *git.Repository
+	if isSameRepo {
+		headRepo = ctx.Repo.Repository
+		headGitRepo = ctx.Repo.GitRepo
+	} else {
+		headGitRepo, err = git.OpenRepository(models.RepoPath(headUser.Name, headRepo.Name))
+		if err != nil {
+			ctx.Handle(500, "OpenRepository", err)
+			return nil, nil, nil, nil, "", ""
+		}
+	}
+
+	if !ctx.User.IsWriterOfRepo(headRepo) && !ctx.User.IsAdmin {
+		log.Trace("ParseCompareInfo[%d]: does not have write access or site admin", baseRepo.ID)
+		ctx.Handle(404, "ParseCompareInfo", nil)
 		return nil, nil, nil, nil, "", ""
 	}
 
@@ -478,7 +509,7 @@ func ParseCompareInfo(ctx *middleware.Context) (*models.User, *models.Repository
 	}
 	ctx.Data["HeadBranches"] = headBranches
 
-	prInfo, err := headGitRepo.GetPullRequestInfo(models.RepoPath(repo.Owner.Name, repo.Name), baseBranch, headBranch)
+	prInfo, err := headGitRepo.GetPullRequestInfo(models.RepoPath(baseRepo.Owner.Name, baseRepo.Name), baseBranch, headBranch)
 	if err != nil {
 		ctx.Handle(500, "GetPullRequestInfo", err)
 		return nil, nil, nil, nil, "", ""
@@ -623,7 +654,7 @@ func CompareAndPullRequestPost(ctx *middleware.Context, form auth.CreateIssueFor
 		return
 	}
 
-	pull := &models.Issue{
+	pullIssue := &models.Issue{
 		RepoID:      repo.ID,
 		Index:       repo.NextIssueIndex(),
 		Name:        form.Title,
@@ -634,26 +665,32 @@ func CompareAndPullRequestPost(ctx *middleware.Context, form auth.CreateIssueFor
 		IsPull:      true,
 		Content:     form.Content,
 	}
-	if err := models.NewPullRequest(repo, pull, labelIDs, attachments, &models.PullRequest{
+	pullRequest := &models.PullRequest{
 		HeadRepoID:   headRepo.ID,
 		BaseRepoID:   repo.ID,
 		HeadUserName: headUser.Name,
 		HeadBranch:   headBranch,
 		BaseBranch:   baseBranch,
+		HeadRepo:     headRepo,
+		BaseRepo:     repo,
 		MergeBase:    prInfo.MergeBase,
 		Type:         models.PULL_REQUEST_GOGS,
-	}, patch); err != nil {
+	}
+	if err := models.NewPullRequest(repo, pullIssue, labelIDs, attachments, pullRequest, patch); err != nil {
 		ctx.Handle(500, "NewPullRequest", err)
+		return
+	} else if err := pullRequest.PushToBaseRepo(); err != nil {
+		ctx.Handle(500, "PushToBaseRepo", err)
 		return
 	}
 
-	notifyWatchersAndMentions(ctx, pull)
+	notifyWatchersAndMentions(ctx, pullIssue)
 	if ctx.Written() {
 		return
 	}
 
-	log.Trace("Pull request created: %d/%d", repo.ID, pull.ID)
-	ctx.Redirect(ctx.Repo.RepoLink + "/pulls/" + com.ToStr(pull.Index))
+	log.Trace("Pull request created: %d/%d", repo.ID, pullIssue.ID)
+	ctx.Redirect(ctx.Repo.RepoLink + "/pulls/" + com.ToStr(pullIssue.Index))
 }
 
 func TriggerTask(ctx *middleware.Context) {

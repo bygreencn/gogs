@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/big"
 	"os"
 	"path"
 	"path/filepath"
@@ -78,19 +79,18 @@ func (key *PublicKey) GetAuthorizedString() string {
 func extractTypeFromBase64Key(key string) (string, error) {
 	b, err := base64.StdEncoding.DecodeString(key)
 	if err != nil || len(b) < 4 {
-		return "", errors.New("Invalid key format")
+		return "", fmt.Errorf("Invalid key format: %v", err)
 	}
 
 	keyLength := int(binary.BigEndian.Uint32(b))
-
 	if len(b) < 4+keyLength {
-		return "", errors.New("Invalid key format")
+		return "", fmt.Errorf("Invalid key format: not enough length")
 	}
 
 	return string(b[4 : 4+keyLength]), nil
 }
 
-// parseKeyString parses any key string in openssh or ssh2 format to clean openssh string (rfc4253)
+// parseKeyString parses any key string in OpenSSH or SSH2 format to clean OpenSSH string (RFC4253)
 func parseKeyString(content string) (string, error) {
 	// Transform all legal line endings to a single "\n"
 	s := strings.Replace(strings.Replace(strings.TrimSpace(content), "\r\n", "\n", -1), "\r", "\n", -1)
@@ -153,8 +153,115 @@ func parseKeyString(content string) (string, error) {
 	return keyType + " " + keyContent + " " + keyComment, nil
 }
 
+// writeTmpKeyFile writes key content to a temporary file
+// and returns the name of that file, along with any possible errors.
+func writeTmpKeyFile(content string) (string, error) {
+	tmpFile, err := ioutil.TempFile(setting.SSH.KeyTestPath, "gogs_keytest")
+	if err != nil {
+		return "", fmt.Errorf("TempFile: %v", err)
+	}
+	defer tmpFile.Close()
+
+	if _, err = tmpFile.WriteString(content); err != nil {
+		return "", fmt.Errorf("tmpFile.WriteString: %v", err)
+	}
+	return tmpFile.Name(), nil
+}
+
+// SSHKeyGenParsePublicKey extracts key type and length using ssh-keygen.
+func SSHKeyGenParsePublicKey(key string) (string, int, error) {
+	// The ssh-keygen in Windows does not print key type, so no need go further.
+	if setting.IsWindows {
+		return "", 0, nil
+	}
+
+	tmpName, err := writeTmpKeyFile(key)
+	if err != nil {
+		return "", 0, fmt.Errorf("writeTmpKeyFile: %v", err)
+	}
+	defer os.Remove(tmpName)
+
+	stdout, stderr, err := process.Exec("SSHKeyGenParsePublicKey", setting.SSH.KeygenPath, "-lf", tmpName)
+	if err != nil {
+		return "", 0, fmt.Errorf("Fail to parse public key: %s - %s", err, stderr)
+	}
+	if strings.Contains(stdout, "is not a public key file") {
+		return "", 0, ErrKeyUnableVerify{stdout}
+	}
+
+	fields := strings.Split(stdout, " ")
+	if len(fields) < 4 {
+		return "", 0, fmt.Errorf("Invalid public key line: %s", stdout)
+	}
+
+	keyType := strings.Trim(fields[len(fields)-1], "()\r\n")
+	return strings.ToLower(keyType), com.StrTo(fields[0]).MustInt(), nil
+}
+
+// SSHNativeParsePublicKey extracts the key type and length using the golang SSH library.
+// NOTE: ed25519 is not supported.
+func SSHNativeParsePublicKey(keyLine string) (string, int, error) {
+	fields := strings.Fields(keyLine)
+	if len(fields) < 2 {
+		return "", 0, fmt.Errorf("not enough fields in public key line: %s", string(keyLine))
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(fields[1])
+	if err != nil {
+		return "", 0, err
+	}
+
+	pkey, err := ssh.ParsePublicKey(raw)
+	if err != nil {
+		if strings.Contains(err.Error(), "ssh: unknown key algorithm") {
+			return "", 0, ErrKeyUnableVerify{err.Error()}
+		}
+		return "", 0, fmt.Errorf("ssh.ParsePublicKey: %v", err)
+	}
+
+	// The ssh library can parse the key, so next we find out what key exactly we have.
+	switch pkey.Type() {
+	case ssh.KeyAlgoDSA:
+		rawPub := struct {
+			Name       string
+			P, Q, G, Y *big.Int
+		}{}
+		if err := ssh.Unmarshal(pkey.Marshal(), &rawPub); err != nil {
+			return "", 0, err
+		}
+		// as per https://bugzilla.mindrot.org/show_bug.cgi?id=1647 we should never
+		// see dsa keys != 1024 bit, but as it seems to work, we will not check here
+		return "dsa", rawPub.P.BitLen(), nil // use P as per crypto/dsa/dsa.go (is L)
+	case ssh.KeyAlgoRSA:
+		rawPub := struct {
+			Name string
+			E    *big.Int
+			N    *big.Int
+		}{}
+		if err := ssh.Unmarshal(pkey.Marshal(), &rawPub); err != nil {
+			return "", 0, err
+		}
+		return "rsa", rawPub.N.BitLen(), nil // use N as per crypto/rsa/rsa.go (is bits)
+	case ssh.KeyAlgoECDSA256:
+		return "ecdsa", 256, nil
+	case ssh.KeyAlgoECDSA384:
+		return "ecdsa", 384, nil
+	case ssh.KeyAlgoECDSA521:
+		return "ecdsa", 521, nil
+	case "ssh-ed25519": // TODO replace with ssh constant when available
+		return "ed25519", 256, nil
+	}
+	return "", 0, fmt.Errorf("Unsupported key length detection for type: %s", pkey.Type())
+}
+
 // CheckPublicKeyString checks if the given public key string is recognized by SSH.
+//
+// The function returns the actual public key line on success.
 func CheckPublicKeyString(content string) (_ string, err error) {
+	if setting.SSH.Disabled {
+		return "", errors.New("SSH is disabled")
+	}
+
 	content, err = parseKeyString(content)
 	if err != nil {
 		return "", err
@@ -168,22 +275,29 @@ func CheckPublicKeyString(content string) (_ string, err error) {
 	// remove any unnecessary whitespace now
 	content = strings.TrimSpace(content)
 
-	fields := strings.Fields(content)
-	if len(fields) < 2 {
-		return "", errors.New("too less fields")
+	var (
+		keyType string
+		length  int
+	)
+	if setting.SSH.StartBuiltinServer {
+		keyType, length, err = SSHNativeParsePublicKey(content)
+	} else {
+		keyType, length, err = SSHKeyGenParsePublicKey(content)
 	}
-
-	key, err := base64.StdEncoding.DecodeString(fields[1])
-	if err != nil {
-		return "", fmt.Errorf("StdEncoding.DecodeString: %v", err)
-	}
-	pkey, err := ssh.ParsePublicKey([]byte(key))
 	if err != nil {
 		return "", fmt.Errorf("ParsePublicKey: %v", err)
 	}
-	log.Trace("Key type: %s", pkey.Type())
+	log.Trace("Key info [native: %v]: %s-%d", setting.SSH.StartBuiltinServer, keyType, length)
 
-	return content, nil
+	if !setting.SSH.MinimumKeySizeCheck {
+		return content, nil
+	}
+	if minLen, found := setting.SSH.MinimumKeySizes[keyType]; found && length >= minLen {
+		return content, nil
+	} else if found && length < minLen {
+		return "", fmt.Errorf("Key length is not enough: got %d, needs %d", length, minLen)
+	}
+	return "", fmt.Errorf("Key type is not allowed: %s", keyType)
 }
 
 // saveAuthorizedKeyFile writes SSH key content to authorized_keys file.
@@ -191,7 +305,7 @@ func saveAuthorizedKeyFile(keys ...*PublicKey) error {
 	sshOpLocker.Lock()
 	defer sshOpLocker.Unlock()
 
-	fpath := filepath.Join(setting.SSHRootPath, "authorized_keys")
+	fpath := filepath.Join(setting.SSH.RootPath, "authorized_keys")
 	f, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return err
@@ -247,7 +361,7 @@ func addKey(e Engine, key *PublicKey) (err error) {
 	}
 	stdout, stderr, err := process.Exec("AddPublicKey", "ssh-keygen", "-lf", tmpPath)
 	if err != nil {
-		return errors.New("ssh-keygen -lf: " + stderr)
+		return fmt.Errorf("'ssh-keygen -lf %s' failed with error '%s': %s", tmpPath, err, stderr)
 	} else if len(stdout) < 2 {
 		return errors.New("not enough output for calculating fingerprint: " + stdout)
 	}
@@ -259,7 +373,7 @@ func addKey(e Engine, key *PublicKey) (err error) {
 	}
 
 	// Don't need to rewrite this file if builtin SSH server is enabled.
-	if setting.StartSSHServer {
+	if setting.SSH.StartBuiltinServer {
 		return nil
 	}
 	return saveAuthorizedKeyFile(key)
@@ -267,6 +381,7 @@ func addKey(e Engine, key *PublicKey) (err error) {
 
 // AddPublicKey adds new public key to database and authorized_keys file.
 func AddPublicKey(ownerID int64, name, content string) (*PublicKey, error) {
+	log.Trace(content)
 	if err := checkKeyContent(content); err != nil {
 		return nil, err
 	}
@@ -408,12 +523,12 @@ func deletePublicKey(e *xorm.Session, keyID int64) error {
 	}
 
 	// Don't need to rewrite this file if builtin SSH server is enabled.
-	if setting.StartSSHServer {
+	if setting.SSH.StartBuiltinServer {
 		return nil
 	}
 
-	fpath := filepath.Join(setting.SSHRootPath, "authorized_keys")
-	tmpPath := filepath.Join(setting.SSHRootPath, "authorized_keys.tmp")
+	fpath := filepath.Join(setting.SSH.RootPath, "authorized_keys")
+	tmpPath := fpath + ".tmp"
 	if err = rewriteAuthorizedKeys(key, fpath, tmpPath); err != nil {
 		return err
 	} else if err = os.Remove(fpath); err != nil {
@@ -455,7 +570,8 @@ func RewriteAllPublicKeys() error {
 	sshOpLocker.Lock()
 	defer sshOpLocker.Unlock()
 
-	tmpPath := filepath.Join(setting.SSHRootPath, "authorized_keys.tmp")
+	fpath := filepath.Join(setting.SSH.RootPath, "authorized_keys")
+	tmpPath := fpath + ".tmp"
 	f, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
@@ -471,7 +587,6 @@ func RewriteAllPublicKeys() error {
 		return err
 	}
 
-	fpath := filepath.Join(setting.SSHRootPath, "authorized_keys")
 	if com.IsExist(fpath) {
 		if err = os.Remove(fpath); err != nil {
 			return err

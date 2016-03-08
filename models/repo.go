@@ -27,7 +27,7 @@ import (
 	"github.com/mcuadros/go-version"
 	"gopkg.in/ini.v1"
 
-	"github.com/gogits/git-module"
+	git "github.com/gogits/git-module"
 	api "github.com/gogits/go-gogs-client"
 
 	"github.com/gogits/gogs/modules/bindata"
@@ -184,6 +184,11 @@ type Repository struct {
 
 func (repo *Repository) AfterSet(colName string, _ xorm.Cell) {
 	switch colName {
+	case "default_branch":
+		// FIXME: use models migration to solve all at once.
+		if len(repo.DefaultBranch) == 0 {
+			repo.DefaultBranch = "master"
+		}
 	case "num_closed_issues":
 		repo.NumOpenIssues = repo.NumIssues - repo.NumClosedIssues
 	case "num_closed_pulls":
@@ -239,6 +244,14 @@ func (repo *Repository) ComposeMetas() map[string]string {
 		}
 	}
 	return repo.ExternalMetas
+}
+
+// DeleteWiki removes the actual and local copy of repository wiki.
+func (repo *Repository) DeleteWiki() {
+	wikiPaths := []string{repo.WikiPath(), repo.LocalWikiPath()}
+	for _, wikiPath := range wikiPaths {
+		RemoveAllWithNotice("Delete repository wiki", wikiPath)
+	}
 }
 
 // GetAssignees returns all users that have write access of repository.
@@ -313,6 +326,10 @@ func (repo *Repository) RepoLink() string {
 	return setting.AppSubUrl + "/" + repo.MustOwner().Name + "/" + repo.Name
 }
 
+func (repo *Repository) RepoRelLink() string {
+	return "/" + repo.MustOwner().Name + "/" + repo.Name
+}
+
 func (repo *Repository) ComposeCompareURL(oldCommitID, newCommitID string) string {
 	return fmt.Sprintf("%s/%s/compare/%s...%s", repo.MustOwner().Name, repo.Name, oldCommitID, newCommitID)
 }
@@ -367,11 +384,16 @@ func (repo *Repository) LocalCopyPath() string {
 
 func updateLocalCopy(repoPath, localPath string) error {
 	if !com.IsExist(localPath) {
-		if err := git.Clone(repoPath, localPath, git.CloneRepoOptions{}); err != nil {
+		if err := git.Clone(repoPath, localPath, git.CloneRepoOptions{
+			Timeout: time.Duration(setting.Git.Timeout.Clone) * time.Second,
+		}); err != nil {
 			return fmt.Errorf("Clone: %v", err)
 		}
 	} else {
-		if err := git.Pull(localPath, true); err != nil {
+		if err := git.Pull(localPath, git.PullRemoteOptions{
+			All:     true,
+			Timeout: time.Duration(setting.Git.Timeout.Pull) * time.Second,
+		}); err != nil {
 			return fmt.Errorf("Pull: %v", err)
 		}
 	}
@@ -457,10 +479,10 @@ func (repo *Repository) cloneLink(isWiki bool) *CloneLink {
 
 	repo.Owner = repo.MustOwner()
 	cl := new(CloneLink)
-	if setting.SSHPort != 22 {
-		cl.SSH = fmt.Sprintf("ssh://%s@%s:%d/%s/%s.git", setting.RunUser, setting.SSHDomain, setting.SSHPort, repo.Owner.Name, repoName)
+	if setting.SSH.Port != 22 {
+		cl.SSH = fmt.Sprintf("ssh://%s@%s:%d/%s/%s.git", setting.RunUser, setting.SSH.Domain, setting.SSH.Port, repo.Owner.Name, repoName)
 	} else {
-		cl.SSH = fmt.Sprintf("%s@%s:%s/%s.git", setting.RunUser, setting.SSHDomain, repo.Owner.Name, repoName)
+		cl.SSH = fmt.Sprintf("%s@%s:%s/%s.git", setting.RunUser, setting.SSH.Domain, repo.Owner.Name, repoName)
 	}
 	cl.HTTPS = fmt.Sprintf("%s%s/%s.git", setting.AppUrl, repo.Owner.Name, repoName)
 	return cl
@@ -652,9 +674,34 @@ func MigrateRepository(u *User, opts MigrateRepoOptions) (*Repository, error) {
 	if err = git.Clone(opts.RemoteAddr, repoPath, git.CloneRepoOptions{
 		Mirror:  true,
 		Quiet:   true,
-		Timeout: 10 * time.Minute,
+		Timeout: time.Duration(setting.Git.Timeout.Migrate) * time.Second,
 	}); err != nil {
 		return repo, fmt.Errorf("Clone: %v", err)
+	}
+
+	// Check if repository is empty.
+	_, stderr, err := com.ExecCmdDir(repoPath, "git", "log", "-1")
+	if err != nil {
+		if strings.Contains(stderr, "fatal: bad default revision 'HEAD'") {
+			repo.IsBare = true
+		} else {
+			return repo, fmt.Errorf("check bare: %v - %s", err, stderr)
+		}
+	}
+
+	if !repo.IsBare {
+		// Try to get HEAD branch and set it as default branch.
+		gitRepo, err := git.OpenRepository(repoPath)
+		if err != nil {
+			return repo, fmt.Errorf("OpenRepository: %v", err)
+		}
+		headBranch, err := gitRepo.GetHEADBranch()
+		if err != nil {
+			return repo, fmt.Errorf("GetHEADBranch: %v", err)
+		}
+		if headBranch != nil {
+			repo.DefaultBranch = headBranch.Name
+		}
 	}
 
 	if opts.IsMirror {
@@ -689,31 +736,6 @@ func CleanUpMigrateInfo(repo *Repository, repoPath string) (*Repository, error) 
 	cfg.DeleteSection("remote \"origin\"")
 	if err = cfg.SaveToIndent(configPath, "\t"); err != nil {
 		return repo, fmt.Errorf("save config file: %v", err)
-	}
-
-	// Check if repository is empty.
-	_, stderr, err := com.ExecCmdDir(repoPath, "git", "log", "-1")
-	if err != nil {
-		if strings.Contains(stderr, "fatal: bad default revision 'HEAD'") {
-			repo.IsBare = true
-		} else {
-			return repo, fmt.Errorf("check bare: %v - %s", err, stderr)
-		}
-	}
-
-	// Try to get HEAD branch and set it as default branch.
-	gitRepo, err := git.OpenRepository(repoPath)
-	if err != nil {
-		log.Error(4, "OpenRepository: %v", err)
-		return repo, nil
-	}
-	headBranch, err := gitRepo.GetHEADBranch()
-	if err != nil {
-		log.Error(4, "GetHEADBranch: %v", err)
-		return repo, nil
-	}
-	if headBranch != nil {
-		repo.DefaultBranch = headBranch.Name
 	}
 
 	return repo, UpdateRepository(repo, false)
@@ -1330,10 +1352,7 @@ func DeleteRepository(uid, repoID int64) error {
 	repoPath := repo.repoPath(sess)
 	RemoveAllWithNotice("Delete repository files", repoPath)
 
-	wikiPaths := []string{repo.WikiPath(), repo.LocalWikiPath()}
-	for _, wikiPath := range wikiPaths {
-		RemoveAllWithNotice("Delete repository wiki", wikiPath)
-	}
+	repo.DeleteWiki()
 
 	// Remove attachment files.
 	for i := range attachmentPaths {
@@ -1610,7 +1629,8 @@ func MirrorUpdate() {
 		}
 
 		repoPath := m.Repo.RepoPath()
-		if _, stderr, err := process.ExecDir(10*time.Minute,
+		if _, stderr, err := process.ExecDir(
+			time.Duration(setting.Git.Timeout.Mirror)*time.Second,
 			repoPath, fmt.Sprintf("MirrorUpdate: %s", repoPath),
 			"git", "remote", "update", "--prune"); err != nil {
 			desc := fmt.Sprintf("Fail to update mirror repository(%s): %s", repoPath, stderr)
@@ -1774,105 +1794,6 @@ func CheckRepoStats() {
 		}
 	}
 	// ***** END: Repository.NumForks *****
-}
-
-// _________        .__  .__        ___.                        __  .__
-// \_   ___ \  ____ |  | |  | _____ \_ |__   ________________ _/  |_|__| ____   ____
-// /    \  \/ /  _ \|  | |  | \__  \ | __ \ /  _ \_  __ \__  \\   __\  |/  _ \ /    \
-// \     \___(  <_> )  |_|  |__/ __ \| \_\ (  <_> )  | \// __ \|  | |  (  <_> )   |  \
-//  \______  /\____/|____/____(____  /___  /\____/|__|  (____  /__| |__|\____/|___|  /
-//         \/                      \/    \/                  \/                    \/
-
-// A Collaboration is a relation between an individual and a repository
-type Collaboration struct {
-	ID      int64     `xorm:"pk autoincr"`
-	RepoID  int64     `xorm:"UNIQUE(s) INDEX NOT NULL"`
-	UserID  int64     `xorm:"UNIQUE(s) INDEX NOT NULL"`
-	Created time.Time `xorm:"CREATED"`
-}
-
-// Add collaborator and accompanying access
-func (repo *Repository) AddCollaborator(u *User) error {
-	collaboration := &Collaboration{
-		RepoID: repo.ID,
-		UserID: u.Id,
-	}
-
-	has, err := x.Get(collaboration)
-	if err != nil {
-		return err
-	} else if has {
-		return nil
-	}
-
-	if err = repo.GetOwner(); err != nil {
-		return fmt.Errorf("GetOwner: %v", err)
-	}
-
-	sess := x.NewSession()
-	defer sessionRelease(sess)
-	if err = sess.Begin(); err != nil {
-		return err
-	}
-
-	if _, err = sess.InsertOne(collaboration); err != nil {
-		return err
-	}
-
-	if repo.Owner.IsOrganization() {
-		err = repo.recalculateTeamAccesses(sess, 0)
-	} else {
-		err = repo.recalculateAccesses(sess)
-	}
-	if err != nil {
-		return fmt.Errorf("recalculateAccesses 'team=%v': %v", repo.Owner.IsOrganization(), err)
-	}
-
-	return sess.Commit()
-}
-
-func (repo *Repository) getCollaborators(e Engine) ([]*User, error) {
-	collaborations := make([]*Collaboration, 0)
-	if err := e.Find(&collaborations, &Collaboration{RepoID: repo.ID}); err != nil {
-		return nil, err
-	}
-
-	users := make([]*User, len(collaborations))
-	for i, c := range collaborations {
-		user, err := getUserByID(e, c.UserID)
-		if err != nil {
-			return nil, err
-		}
-		users[i] = user
-	}
-	return users, nil
-}
-
-// GetCollaborators returns the collaborators for a repository
-func (repo *Repository) GetCollaborators() ([]*User, error) {
-	return repo.getCollaborators(x)
-}
-
-// Delete collaborator and accompanying access
-func (repo *Repository) DeleteCollaborator(u *User) (err error) {
-	collaboration := &Collaboration{
-		RepoID: repo.ID,
-		UserID: u.Id,
-	}
-
-	sess := x.NewSession()
-	defer sessionRelease(sess)
-	if err = sess.Begin(); err != nil {
-		return err
-	}
-
-	if has, err := sess.Delete(collaboration); err != nil || has == 0 {
-		return err
-	} else if err = repo.recalculateAccesses(sess); err != nil {
-		return err
-	}
-
-	return sess.Commit()
 }
 
 //  __      __         __         .__

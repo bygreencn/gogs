@@ -61,17 +61,25 @@ var (
 	Domain             string
 	HttpAddr, HttpPort string
 	LocalURL           string
-	DisableSSH         bool
-	StartSSHServer     bool
-	SSHDomain          string
-	SSHPort            int
-	SSHRootPath        string
 	OfflineMode        bool
 	DisableRouterLog   bool
 	CertFile, KeyFile  string
 	StaticRootPath     string
 	EnableGzip         bool
 	LandingPageUrl     LandingPage
+
+	SSH struct {
+		Disabled            bool           `ini:"DISABLE_SSH"`
+		StartBuiltinServer  bool           `ini:"START_SSH_SERVER"`
+		Domain              string         `ini:"SSH_DOMAIN"`
+		Port                int            `ini:"SSH_PORT"`
+		ListenPort          int            `ini:"SSH_LISTEN_PORT"`
+		RootPath            string         `ini:"SSH_ROOT_PATH"`
+		KeyTestPath         string         `ini:"SSH_KEY_TEST_PATH"`
+		KeygenPath          string         `ini:"SSH_KEYGEN_PATH"`
+		MinimumKeySizeCheck bool           `ini:"-"`
+		MinimumKeySizes     map[string]int `ini:"-"`
+	}
 
 	// Security settings
 	InstallLock          bool
@@ -123,7 +131,6 @@ var (
 	}
 
 	// Picture settings
-	PictureService   string
 	AvatarUploadPath string
 	GravatarSource   string
 	DisableGravatar  bool
@@ -155,6 +162,12 @@ var (
 	Git struct {
 		MaxGitDiffLines int
 		GcArgs          []string `delim:" "`
+		Timeout         struct {
+			Migrate int
+			Mirror  int
+			Clone   int
+			Pull    int
+		} `ini:"git.timeout"`
 	}
 
 	// Cron tasks
@@ -318,16 +331,6 @@ func NewContext() {
 	HttpAddr = sec.Key("HTTP_ADDR").MustString("0.0.0.0")
 	HttpPort = sec.Key("HTTP_PORT").MustString("3000")
 	LocalURL = sec.Key("LOCAL_ROOT_URL").MustString("http://localhost:" + HttpPort + "/")
-	DisableSSH = sec.Key("DISABLE_SSH").MustBool()
-	if !DisableSSH {
-		StartSSHServer = sec.Key("START_SSH_SERVER").MustBool()
-	}
-	SSHDomain = sec.Key("SSH_DOMAIN").MustString(Domain)
-	SSHPort = sec.Key("SSH_PORT").MustInt(22)
-	SSHRootPath = sec.Key("SSH_ROOT_PATH").MustString(path.Join(homeDir, ".ssh"))
-	if err := os.MkdirAll(SSHRootPath, 0700); err != nil {
-		log.Fatal(4, "Fail to create '%s': %v", SSHRootPath, err)
-	}
 	OfflineMode = sec.Key("OFFLINE_MODE").MustBool()
 	DisableRouterLog = sec.Key("DISABLE_ROUTER_LOG").MustBool()
 	StaticRootPath = sec.Key("STATIC_ROOT_PATH").MustString(workDir)
@@ -338,6 +341,39 @@ func NewContext() {
 		LandingPageUrl = LANDING_PAGE_EXPLORE
 	default:
 		LandingPageUrl = LANDING_PAGE_HOME
+	}
+
+	SSH.RootPath = path.Join(homeDir, ".ssh")
+	SSH.KeyTestPath = os.TempDir()
+	if err = Cfg.Section("server").MapTo(&SSH); err != nil {
+		log.Fatal(4, "Fail to map SSH settings: %v", err)
+	}
+	// When disable SSH, start builtin server value is ignored.
+	if SSH.Disabled {
+		SSH.StartBuiltinServer = false
+	}
+
+	if !SSH.Disabled && !SSH.StartBuiltinServer {
+		if err := os.MkdirAll(SSH.RootPath, 0700); err != nil {
+			log.Fatal(4, "Fail to create '%s': %v", SSH.RootPath, err)
+		} else if err = os.MkdirAll(SSH.KeyTestPath, 0644); err != nil {
+			log.Fatal(4, "Fail to create '%s': %v", SSH.KeyTestPath, err)
+		}
+
+		if !filepath.IsAbs(SSH.KeygenPath) {
+			if _, err := exec.LookPath(SSH.KeygenPath); err != nil {
+				log.Fatal(4, "Fail to test '%s' command: %v (forgotten install?)", SSH.KeygenPath, err)
+			}
+		}
+	}
+
+	SSH.MinimumKeySizeCheck = sec.Key("MINIMUM_KEY_SIZE_CHECK").MustBool()
+	SSH.MinimumKeySizes = map[string]int{}
+	minimumKeySizes := Cfg.Section("ssh.minimum_key_sizes").Keys()
+	for _, key := range minimumKeySizes {
+		if key.MustInt() != -1 {
+			SSH.MinimumKeySizes[strings.ToLower(key.Name())] = key.MustInt()
+		}
 	}
 
 	sec = Cfg.Section("security")
@@ -411,7 +447,6 @@ func NewContext() {
 	ThemeColorMetaTag = sec.Key("THEME_COLOR_META_TAG").MustString("#ff5343")
 
 	sec = Cfg.Section("picture")
-	PictureService = sec.Key("SERVICE").In("server", []string{"server"})
 	AvatarUploadPath = sec.Key("AVATAR_UPLOAD_PATH").MustString(path.Join(AppDataPath, "avatars"))
 	forcePathSeparator(AvatarUploadPath)
 	if !filepath.IsAbs(AvatarUploadPath) {

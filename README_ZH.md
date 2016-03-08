@@ -12,7 +12,7 @@ Gogs 的目标是打造一个最简单、最快速和最轻松的方式搭建自
 - 有关基本用法和变更日志，请通过 [使用手册](http://gogs.io/docs/intro/) 查看。
 - 您可以到 [Trello Board](https://trello.com/b/uxAoeLUl/gogs-go-git-service) 跟随开发团队的脚步。
 - 想要先睹为快？直接去 [在线体验](https://try.gogs.io/gogs/gogs) 。
-- 使用过程中遇到问题？尝试从 [故障排查](http://gogs.io/docs/intro/troubleshooting.html) 页面获取帮助。
+- 使用过程中遇到问题？尝试从 [故障排查](http://gogs.io/docs/intro/troubleshooting.html) 页面或 [用户论坛](https://discuss.gogs.io/) 获取帮助。
 - 希望帮助多国语言界面的翻译吗？请立即访问 [详情页面](http://gogs.io/docs/features/i18n.html)！
 
 ## 功能特性
@@ -30,7 +30,7 @@ Gogs 的目标是打造一个最简单、最快速和最轻松的方式搭建自
 - 支持邮件服务
 - 支持后台管理面板
 - 支持 MySQL、PostgreSQL、SQLite3 和 [TiDB](https://github.com/pingcap/tidb)（实验性支持） 数据库
-- 支持多语言本地化（[14 种语言]([more](https://crowdin.com/project/gogs))）
+- 支持多语言本地化（[15 种语言]([more](https://crowdin.com/project/gogs))）
 
 ## 系统要求
 
