@@ -4,7 +4,10 @@
 @set GOGS_SOURCE_PATH=%CD% 
 @set MINGW64_I386_PATH=C:\mingw-w64\mingw32\bin
 @set MINGW64_X86X64_PATH=C:\mingw-w64\mingw64\bin
+REM @set GOROOT=c:\Go
+REM @set GOPATH=c:\Projects\Go
 
+REM go get -u github.com/...
 
 cd %GOGS_SOURCE_PATH%
 go clean 
@@ -21,9 +24,9 @@ set GOOS=windows
 set GOARCH=386
 call make.bat --no-clean
 cd %GOGS_SOURCE_PATH%
-go build -tags "tidb sqlite cert"
+go build -tags "tidb sqlite cert" -v
 copy gogs.exe gogs-i386.exe
-go clean -tags "tidb sqlite cert"
+go clean -tags "tidb sqlite cert" -v
 
 @echo *************************************************************
 @echo 1. Setting up environment for MinGW-w64 GCC for 64-bit...
@@ -34,9 +37,9 @@ set GOOS=windows
 set GOARCH=amd64
 call make.bat --no-clean
 cd %GOGS_SOURCE_PATH%
-go build -tags "tidb sqlite cert"
+go build -tags "tidb sqlite cert" -v 
 copy gogs.exe gogs-x86_x64.exe
-go clean -tags "tidb sqlite cert"
+go clean -tags "tidb sqlite cert" -v
 
 set PATH=%SYS_PATH%
 echo on
