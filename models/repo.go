@@ -178,8 +178,19 @@ type Repository struct {
 	ForkID   int64
 	BaseRepo *Repository `xorm:"-"`
 
-	Created time.Time `xorm:"CREATED"`
-	Updated time.Time `xorm:"UPDATED"`
+	Created     time.Time `xorm:"-"`
+	CreatedUnix int64
+	Updated     time.Time `xorm:"-"`
+	UpdatedUnix int64
+}
+
+func (repo *Repository) BeforeInsert() {
+	repo.CreatedUnix = time.Now().UTC().Unix()
+	repo.UpdatedUnix = repo.CreatedUnix
+}
+
+func (repo *Repository) BeforeUpdate() {
+	repo.UpdatedUnix = time.Now().UTC().Unix()
 }
 
 func (repo *Repository) AfterSet(colName string, _ xorm.Cell) {
@@ -195,8 +206,10 @@ func (repo *Repository) AfterSet(colName string, _ xorm.Cell) {
 		repo.NumOpenPulls = repo.NumPulls - repo.NumClosedPulls
 	case "num_closed_milestones":
 		repo.NumOpenMilestones = repo.NumMilestones - repo.NumClosedMilestones
-	case "updated":
-		repo.Updated = regulateTimeZone(repo.Updated)
+	case "created_unix":
+		repo.Created = time.Unix(repo.CreatedUnix, 0).Local()
+	case "updated_unix":
+		repo.Updated = time.Unix(repo.UpdatedUnix, 0)
 	}
 }
 
@@ -523,14 +536,26 @@ func IsUsableName(name string) error {
 
 // Mirror represents a mirror information of repository.
 type Mirror struct {
-	ID         int64 `xorm:"pk autoincr"`
-	RepoID     int64
-	Repo       *Repository `xorm:"-"`
-	Interval   int         // Hour.
-	Updated    time.Time   `xorm:"UPDATED"`
-	NextUpdate time.Time
+	ID       int64 `xorm:"pk autoincr"`
+	RepoID   int64
+	Repo     *Repository `xorm:"-"`
+	Interval int         // Hour.
+
+	Updated        time.Time `xorm:"-"`
+	UpdatedUnix    int64
+	NextUpdate     time.Time `xorm:"-"`
+	NextUpdateUnix int64
 
 	address string `xorm:"-"`
+}
+
+func (m *Mirror) BeforeInsert() {
+	m.NextUpdateUnix = m.NextUpdate.UTC().Unix()
+}
+
+func (m *Mirror) BeforeUpdate() {
+	m.UpdatedUnix = time.Now().UTC().Unix()
+	m.NextUpdateUnix = m.NextUpdate.UTC().Unix()
 }
 
 func (m *Mirror) AfterSet(colName string, _ xorm.Cell) {
@@ -541,6 +566,10 @@ func (m *Mirror) AfterSet(colName string, _ xorm.Cell) {
 		if err != nil {
 			log.Error(3, "GetRepositoryByID[%d]: %v", m.ID, err)
 		}
+	case "updated_unix":
+		m.Updated = time.Unix(m.UpdatedUnix, 0).Local()
+	case "next_updated_unix":
+		m.NextUpdate = time.Unix(m.NextUpdateUnix, 0).Local()
 	}
 }
 
@@ -1020,11 +1049,16 @@ func CountPublicRepositories() int64 {
 	return countRepositories(false)
 }
 
+func Repositories(page, pageSize int) (_ []*Repository, err error) {
+	repos := make([]*Repository, 0, pageSize)
+	return repos, x.Limit(pageSize, (page-1)*pageSize).Asc("id").Find(&repos)
+}
+
 // RepositoriesWithUsers returns number of repos in given page.
 func RepositoriesWithUsers(page, pageSize int) (_ []*Repository, err error) {
-	repos := make([]*Repository, 0, pageSize)
-	if err = x.Limit(pageSize, (page-1)*pageSize).Asc("id").Find(&repos); err != nil {
-		return nil, err
+	repos, err := Repositories(page, pageSize)
+	if err != nil {
+		return nil, fmt.Errorf("Repositories: %v", err)
 	}
 
 	for i := range repos {
@@ -1435,7 +1469,8 @@ func GetRepositoryByID(id int64) (*Repository, error) {
 // GetRepositories returns a list of repositories of given user.
 func GetRepositories(uid int64, private bool) ([]*Repository, error) {
 	repos := make([]*Repository, 0, 10)
-	sess := x.Desc("updated")
+	sess := x.Desc("updated_unix")
+
 	if !private {
 		sess.Where("is_private=?", false)
 	}
@@ -1444,9 +1479,9 @@ func GetRepositories(uid int64, private bool) ([]*Repository, error) {
 }
 
 // GetRecentUpdatedRepositories returns the list of repositories that are recently updated.
-func GetRecentUpdatedRepositories(page int) (repos []*Repository, err error) {
-	return repos, x.Limit(setting.ExplorePagingNum, (page-1)*setting.ExplorePagingNum).
-		Where("is_private=?", false).Limit(setting.ExplorePagingNum).Desc("updated").Find(&repos)
+func GetRecentUpdatedRepositories(page, pageSize int) (repos []*Repository, err error) {
+	return repos, x.Limit(pageSize, (page-1)*pageSize).
+		Where("is_private=?", false).Limit(pageSize).Desc("updated_unix").Find(&repos)
 }
 
 func getRepositoryCount(e Engine, u *User) (int64, error) {
@@ -1458,32 +1493,52 @@ func GetRepositoryCount(u *User) (int64, error) {
 	return getRepositoryCount(x, u)
 }
 
-type SearchOption struct {
-	Keyword string
-	Uid     int64
-	Limit   int
-	Private bool
+type SearchRepoOptions struct {
+	Keyword  string
+	OwnerID  int64
+	OrderBy  string
+	Private  bool // Include private repositories in results
+	Page     int
+	PageSize int // Can be smaller than or equal to setting.ExplorePagingNum
 }
 
-// SearchRepositoryByName returns given number of repositories whose name contains keyword.
-func SearchRepositoryByName(opt SearchOption) (repos []*Repository, err error) {
-	if len(opt.Keyword) == 0 {
-		return repos, nil
+// SearchRepositoryByName takes keyword and part of repository name to search,
+// it returns results in given range and number of total results.
+func SearchRepositoryByName(opts *SearchRepoOptions) (repos []*Repository, _ int64, _ error) {
+	if len(opts.Keyword) == 0 {
+		return repos, 0, nil
 	}
-	opt.Keyword = strings.ToLower(opt.Keyword)
+	opts.Keyword = strings.ToLower(opts.Keyword)
 
-	repos = make([]*Repository, 0, opt.Limit)
-
-	// Append conditions.
-	sess := x.Limit(opt.Limit)
-	if opt.Uid > 0 {
-		sess.Where("owner_id=?", opt.Uid)
+	if opts.PageSize <= 0 || opts.PageSize > setting.ExplorePagingNum {
+		opts.PageSize = setting.ExplorePagingNum
 	}
-	if !opt.Private {
+	if opts.Page <= 0 {
+		opts.Page = 1
+	}
+
+	repos = make([]*Repository, 0, opts.PageSize)
+
+	// Append conditions
+	sess := x.Where("LOWER(lower_name) LIKE ?", "%"+opts.Keyword+"%")
+	if opts.OwnerID > 0 {
+		sess.And("owner_id = ?", opts.OwnerID)
+	}
+	if !opts.Private {
 		sess.And("is_private=?", false)
 	}
-	sess.And("lower_name like ?", "%"+opt.Keyword+"%").Find(&repos)
-	return repos, err
+
+	var countSess xorm.Session
+	countSess = *sess
+	count, err := countSess.Count(new(Repository))
+	if err != nil {
+		return nil, 0, fmt.Errorf("Count: %v", err)
+	}
+
+	if len(opts.OrderBy) > 0 {
+		sess.OrderBy(opts.OrderBy)
+	}
+	return repos, count, sess.Limit(opts.PageSize, (opts.Page-1)*opts.PageSize).Find(&repos)
 }
 
 // DeleteRepositoryArchives deletes all repositories' archives.

@@ -3,8 +3,8 @@
 <head data-suburl="{{AppSubUrl}}">
 	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 	<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
-	<meta name="author" content="Gogs - Go Git Service" />
-	<meta name="description" content="Gogs (Go Git Service) is a painless self-hosted Git service written in Go" />
+	<meta name="author" content="{{if .Repository}}{{.Owner.Name}}{{else}}Gogs - Go Git Service{{end}}" />
+	<meta name="description" content="{{if .Repository}}{{.Repository.Name}}{{if .Repository.Description}} - {{.Repository.Description}}{{end}}{{else}}Gogs (Go Git Service) is a painless self-hosted Git service written in Go{{end}}" />
 	<meta name="keywords" content="go, git, self-hosted, gogs">
 	<meta name="referrer" content="no-referrer" />
 	<meta name="_csrf" content="{{.CsrfToken}}" />
@@ -18,7 +18,7 @@
 
 	<script src="{{AppSubUrl}}/js/jquery-1.11.3.min.js"></script>
 	<link rel="stylesheet" href="{{AppSubUrl}}/assets/font-awesome-4.5.0/css/font-awesome.min.css">
-	<link rel="stylesheet" href="{{AppSubUrl}}/assets/octicons-3.4.1/octicons.css">
+	<link rel="stylesheet" href="{{AppSubUrl}}/assets/octicons-3.5.0/octicons.css">
 
 	{{if .RequireSimpleMDE}}
 		<link rel="stylesheet" href="{{AppSubUrl}}/plugins/simplemde-1.10.0/simplemde.min.css">
@@ -59,7 +59,7 @@
 									<a class="item{{if .PageIsHome}} active{{end}}" href="{{AppSubUrl}}/">{{.i18n.Tr "home"}}</a>
 								{{end}}
 
-								<a class="item{{if .PageIsExplore}} active{{end}}" href="{{AppSubUrl}}/explore">{{.i18n.Tr "explore"}}</a>
+								<a class="item{{if .PageIsExplore}} active{{end}}" href="{{AppSubUrl}}/explore/repos">{{.i18n.Tr "explore"}}</a>
 								{{/*<div class="item">
 									<div class="ui icon input">
 									<input class="searchbox" type="text" placeholder="{{.i18n.Tr "search_project"}}">

@@ -7,32 +7,32 @@ package repo
 import (
 	api "github.com/gogits/go-gogs-client"
 
-	"github.com/gogits/gogs/modules/middleware"
+	"github.com/gogits/gogs/modules/context"
 	"github.com/gogits/gogs/routers/api/v1/convert"
 )
 
 // https://github.com/gogits/go-gogs-client/wiki/Repositories#get-branch
-func GetBranch(ctx *middleware.Context) {
+func GetBranch(ctx *context.APIContext) {
 	branch, err := ctx.Repo.Repository.GetBranch(ctx.Params(":branchname"))
 	if err != nil {
-		ctx.APIError(500, "GetBranch", err)
+		ctx.Error(500, "GetBranch", err)
 		return
 	}
 
 	c, err := branch.GetCommit()
 	if err != nil {
-		ctx.APIError(500, "GetCommit", err)
+		ctx.Error(500, "GetCommit", err)
 		return
 	}
 
-	ctx.JSON(200, convert.ToApiBranch(branch, c))
+	ctx.JSON(200, convert.ToBranch(branch, c))
 }
 
 // https://github.com/gogits/go-gogs-client/wiki/Repositories#list-branches
-func ListBranches(ctx *middleware.Context) {
+func ListBranches(ctx *context.APIContext) {
 	branches, err := ctx.Repo.Repository.GetBranches()
 	if err != nil {
-		ctx.APIError(500, "GetBranches", err)
+		ctx.Error(500, "GetBranches", err)
 		return
 	}
 
@@ -40,10 +40,10 @@ func ListBranches(ctx *middleware.Context) {
 	for i := range branches {
 		c, err := branches[i].GetCommit()
 		if err != nil {
-			ctx.APIError(500, "GetCommit", err)
+			ctx.Error(500, "GetCommit", err)
 			return
 		}
-		apiBranches[i] = convert.ToApiBranch(branches[i], c)
+		apiBranches[i] = convert.ToBranch(branches[i], c)
 	}
 
 	ctx.JSON(200, &apiBranches)

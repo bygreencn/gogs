@@ -2,7 +2,7 @@
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
-package middleware
+package context
 
 import (
 	"fmt"
@@ -18,35 +18,12 @@ import (
 	"github.com/go-macaron/session"
 	"gopkg.in/macaron.v1"
 
-	"github.com/gogits/git-module"
-
 	"github.com/gogits/gogs/models"
 	"github.com/gogits/gogs/modules/auth"
 	"github.com/gogits/gogs/modules/base"
 	"github.com/gogits/gogs/modules/log"
 	"github.com/gogits/gogs/modules/setting"
 )
-
-type RepoContext struct {
-	AccessMode   models.AccessMode
-	IsWatching   bool
-	IsViewBranch bool
-	IsViewTag    bool
-	IsViewCommit bool
-	Repository   *models.Repository
-	Owner        *models.User
-	Commit       *git.Commit
-	Tag          *git.Tag
-	GitRepo      *git.Repository
-	BranchName   string
-	TagName      string
-	TreeName     string
-	CommitID     string
-	RepoLink     string
-	CloneLink    models.CloneLink
-	CommitsCount int64
-	Mirror       *models.Mirror
-}
 
 // Context represents context of a request.
 type Context struct {
@@ -60,38 +37,8 @@ type Context struct {
 	IsSigned    bool
 	IsBasicAuth bool
 
-	Repo *RepoContext
-
-	Org struct {
-		IsOwner      bool
-		IsMember     bool
-		IsTeamMember bool // Is member of team.
-		IsTeamAdmin  bool // In owner team or team that has admin permission level.
-		Organization *models.User
-		OrgLink      string
-
-		Team *models.Team
-	}
-}
-
-// IsOwner returns true if current user is the owner of repository.
-func (r *RepoContext) IsOwner() bool {
-	return r.AccessMode >= models.ACCESS_MODE_OWNER
-}
-
-// IsAdmin returns true if current user has admin or higher access of repository.
-func (r *RepoContext) IsAdmin() bool {
-	return r.AccessMode >= models.ACCESS_MODE_ADMIN
-}
-
-// IsWriter returns true if current user has write or higher access of repository.
-func (r *RepoContext) IsWriter() bool {
-	return r.AccessMode >= models.ACCESS_MODE_WRITE
-}
-
-// HasAccess returns true if the current user has at least read access for this repository
-func (r *RepoContext) HasAccess() bool {
-	return r.AccessMode >= models.ACCESS_MODE_READ
+	Repo *Repository
+	Org  *Organization
 }
 
 // HasError returns true if error occurs in form validation.
@@ -165,25 +112,6 @@ func (ctx *Context) HandleText(status int, title string) {
 	ctx.PlainText(status, []byte(title))
 }
 
-// APIError logs error with title if status is 500.
-func (ctx *Context) APIError(status int, title string, obj interface{}) {
-	var message string
-	if err, ok := obj.(error); ok {
-		message = err.Error()
-	} else {
-		message = obj.(string)
-	}
-
-	if status == 500 {
-		log.Error(4, "%s: %s", title, message)
-	}
-
-	ctx.JSON(status, map[string]string{
-		"message": message,
-		"url":     base.DOC_URL,
-	})
-}
-
 func (ctx *Context) ServeContent(name string, r io.ReadSeeker, params ...interface{}) {
 	modtime := time.Now()
 	for _, p := range params {
@@ -211,7 +139,10 @@ func Contexter() macaron.Handler {
 			csrf:    x,
 			Flash:   f,
 			Session: sess,
-			Repo:    &RepoContext{},
+			Repo: &Repository{
+				PullRequest: &PullRequest{},
+			},
+			Org: &Organization{},
 		}
 		// Compute current URL for real-time change language.
 		ctx.Data["Link"] = setting.AppSubUrl + strings.TrimSuffix(ctx.Req.URL.Path, "/")

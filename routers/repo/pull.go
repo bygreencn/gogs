@@ -16,8 +16,8 @@ import (
 	"github.com/gogits/gogs/models"
 	"github.com/gogits/gogs/modules/auth"
 	"github.com/gogits/gogs/modules/base"
+	"github.com/gogits/gogs/modules/context"
 	"github.com/gogits/gogs/modules/log"
-	"github.com/gogits/gogs/modules/middleware"
 	"github.com/gogits/gogs/modules/setting"
 )
 
@@ -38,7 +38,7 @@ var (
 	}
 )
 
-func getForkRepository(ctx *middleware.Context) *models.Repository {
+func getForkRepository(ctx *context.Context) *models.Repository {
 	forkRepo, err := models.GetRepositoryByID(ctx.ParamsInt64(":repoid"))
 	if err != nil {
 		if models.IsErrRepoNotExist(err) {
@@ -73,7 +73,7 @@ func getForkRepository(ctx *middleware.Context) *models.Repository {
 	return forkRepo
 }
 
-func Fork(ctx *middleware.Context) {
+func Fork(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("new_fork")
 
 	getForkRepository(ctx)
@@ -85,7 +85,7 @@ func Fork(ctx *middleware.Context) {
 	ctx.HTML(200, FORK)
 }
 
-func ForkPost(ctx *middleware.Context, form auth.CreateRepoForm) {
+func ForkPost(ctx *context.Context, form auth.CreateRepoForm) {
 	ctx.Data["Title"] = ctx.Tr("new_fork")
 
 	forkRepo := getForkRepository(ctx)
@@ -138,7 +138,7 @@ func ForkPost(ctx *middleware.Context, form auth.CreateRepoForm) {
 	ctx.Redirect(setting.AppSubUrl + "/" + ctxUser.Name + "/" + repo.Name)
 }
 
-func checkPullInfo(ctx *middleware.Context) *models.Issue {
+func checkPullInfo(ctx *context.Context) *models.Issue {
 	issue, err := models.GetIssueByIndex(ctx.Repo.Repository.ID, ctx.ParamsInt64(":index"))
 	if err != nil {
 		if models.IsErrIssueNotExist(err) {
@@ -156,10 +156,7 @@ func checkPullInfo(ctx *middleware.Context) *models.Issue {
 		return nil
 	}
 
-	if err = issue.GetPoster(); err != nil {
-		ctx.Handle(500, "GetPoster", err)
-		return nil
-	} else if err = issue.GetPullRequest(); err != nil {
+	if err = issue.GetPullRequest(); err != nil {
 		ctx.Handle(500, "GetPullRequest", err)
 		return nil
 	} else if err = issue.GetHeadRepo(); err != nil {
@@ -178,7 +175,7 @@ func checkPullInfo(ctx *middleware.Context) *models.Issue {
 	return issue
 }
 
-func PrepareMergedViewPullInfo(ctx *middleware.Context, pull *models.Issue) {
+func PrepareMergedViewPullInfo(ctx *context.Context, pull *models.Issue) {
 	ctx.Data["HasMerged"] = true
 
 	var err error
@@ -203,7 +200,7 @@ func PrepareMergedViewPullInfo(ctx *middleware.Context, pull *models.Issue) {
 	}
 }
 
-func PrepareViewPullInfo(ctx *middleware.Context, pull *models.Issue) *git.PullRequestInfo {
+func PrepareViewPullInfo(ctx *context.Context, pull *models.Issue) *git.PullRequestInfo {
 	repo := ctx.Repo.Repository
 
 	ctx.Data["HeadTarget"] = pull.HeadUserName + "/" + pull.HeadBranch
@@ -246,7 +243,7 @@ func PrepareViewPullInfo(ctx *middleware.Context, pull *models.Issue) *git.PullR
 	return prInfo
 }
 
-func ViewPullCommits(ctx *middleware.Context) {
+func ViewPullCommits(ctx *context.Context) {
 	ctx.Data["PageIsPullCommits"] = true
 
 	pull := checkPullInfo(ctx)
@@ -296,7 +293,7 @@ func ViewPullCommits(ctx *middleware.Context) {
 	ctx.HTML(200, PULL_COMMITS)
 }
 
-func ViewPullFiles(ctx *middleware.Context) {
+func ViewPullFiles(ctx *context.Context) {
 	ctx.Data["PageIsPullFiles"] = true
 
 	pull := checkPullInfo(ctx)
@@ -377,7 +374,7 @@ func ViewPullFiles(ctx *middleware.Context) {
 	ctx.HTML(200, PULL_FILES)
 }
 
-func MergePullRequest(ctx *middleware.Context) {
+func MergePullRequest(ctx *context.Context) {
 	issue := checkPullInfo(ctx)
 	if ctx.Written() {
 		return
@@ -413,7 +410,7 @@ func MergePullRequest(ctx *middleware.Context) {
 	ctx.Redirect(ctx.Repo.RepoLink + "/pulls/" + com.ToStr(pr.Index))
 }
 
-func ParseCompareInfo(ctx *middleware.Context) (*models.User, *models.Repository, *git.Repository, *git.PullRequestInfo, string, string) {
+func ParseCompareInfo(ctx *context.Context) (*models.User, *models.Repository, *git.Repository, *git.PullRequestInfo, string, string) {
 	baseRepo := ctx.Repo.Repository
 
 	// Get compared branches information
@@ -462,7 +459,7 @@ func ParseCompareInfo(ctx *middleware.Context) (*models.User, *models.Repository
 	}
 	ctx.Data["HeadUser"] = headUser
 	ctx.Data["HeadBranch"] = headBranch
-	ctx.Data["IsBetweenBranches"] = isSameRepo
+	ctx.Repo.PullRequest.SameRepo = isSameRepo
 
 	// Check if base branch is valid.
 	if !ctx.Repo.GitRepo.IsBranchExist(baseBranch) {
@@ -520,7 +517,7 @@ func ParseCompareInfo(ctx *middleware.Context) (*models.User, *models.Repository
 }
 
 func PrepareCompareDiff(
-	ctx *middleware.Context,
+	ctx *context.Context,
 	headUser *models.User,
 	headRepo *models.Repository,
 	headGitRepo *git.Repository,
@@ -576,7 +573,7 @@ func PrepareCompareDiff(
 	return false
 }
 
-func CompareAndPullRequest(ctx *middleware.Context) {
+func CompareAndPullRequest(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.pulls.compare_changes")
 	ctx.Data["PageIsComparePull"] = true
 	ctx.Data["IsDiffCompare"] = true
@@ -618,7 +615,7 @@ func CompareAndPullRequest(ctx *middleware.Context) {
 	ctx.HTML(200, COMPARE_PULL)
 }
 
-func CompareAndPullRequestPost(ctx *middleware.Context, form auth.CreateIssueForm) {
+func CompareAndPullRequestPost(ctx *context.Context, form auth.CreateIssueForm) {
 	ctx.Data["Title"] = ctx.Tr("repo.pulls.compare_changes")
 	ctx.Data["PageIsComparePull"] = true
 	ctx.Data["IsDiffCompare"] = true
@@ -682,10 +679,8 @@ func CompareAndPullRequestPost(ctx *middleware.Context, form auth.CreateIssueFor
 	} else if err := pullRequest.PushToBaseRepo(); err != nil {
 		ctx.Handle(500, "PushToBaseRepo", err)
 		return
-	}
-
-	notifyWatchersAndMentions(ctx, pullIssue)
-	if ctx.Written() {
+	} else if err := MailWatchersAndMentions(ctx, pullIssue); err != nil {
+		ctx.Handle(500, "MailWatchersAndMentions", err)
 		return
 	}
 
@@ -693,7 +688,7 @@ func CompareAndPullRequestPost(ctx *middleware.Context, form auth.CreateIssueFor
 	ctx.Redirect(ctx.Repo.RepoLink + "/pulls/" + com.ToStr(pullIssue.Index))
 }
 
-func TriggerTask(ctx *middleware.Context) {
+func TriggerTask(ctx *context.Context) {
 	branch := ctx.Query("branch")
 	secret := ctx.Query("secret")
 	if len(branch) == 0 || len(secret) == 0 {

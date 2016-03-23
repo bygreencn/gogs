@@ -20,10 +20,10 @@ import (
 	"github.com/gogits/gogs/models"
 	"github.com/gogits/gogs/modules/auth"
 	"github.com/gogits/gogs/modules/base"
+	"github.com/gogits/gogs/modules/context"
 	"github.com/gogits/gogs/modules/log"
 	"github.com/gogits/gogs/modules/mailer"
 	"github.com/gogits/gogs/modules/markdown"
-	"github.com/gogits/gogs/modules/middleware"
 	"github.com/gogits/gogs/modules/setting"
 )
 
@@ -52,21 +52,27 @@ var (
 	}
 )
 
-func MustEnableIssues(ctx *middleware.Context) {
+func MustEnableIssues(ctx *context.Context) {
 	if !ctx.Repo.Repository.EnableIssues {
 		ctx.Handle(404, "MustEnableIssues", nil)
+		return
 	}
 }
 
-func MustAllowPulls(ctx *middleware.Context) {
+func MustAllowPulls(ctx *context.Context) {
 	if !ctx.Repo.Repository.AllowsPulls() {
 		ctx.Handle(404, "MustAllowPulls", nil)
+		return
 	}
 
-	ctx.Data["HasForkedRepo"] = ctx.IsSigned && ctx.User.HasForkedRepo(ctx.Repo.Repository.ID)
+	// User can send pull request if owns a forked repository.
+	if ctx.IsSigned && ctx.User.HasForkedRepo(ctx.Repo.Repository.ID) {
+		ctx.Repo.PullRequest.Allowed = true
+		ctx.Repo.PullRequest.HeadInfo = ctx.User.Name + ":" + ctx.Repo.BranchName
+	}
 }
 
-func RetrieveLabels(ctx *middleware.Context) {
+func RetrieveLabels(ctx *context.Context) {
 	labels, err := models.GetLabelsByRepoID(ctx.Repo.Repository.ID)
 	if err != nil {
 		ctx.Handle(500, "RetrieveLabels.GetLabels: %v", err)
@@ -79,7 +85,7 @@ func RetrieveLabels(ctx *middleware.Context) {
 	ctx.Data["NumLabels"] = len(labels)
 }
 
-func Issues(ctx *middleware.Context) {
+func Issues(ctx *context.Context) {
 	isPullList := ctx.Params(":type") == "pulls"
 	if isPullList {
 		MustAllowPulls(ctx)
@@ -189,16 +195,6 @@ func Issues(ctx *middleware.Context) {
 
 	// Get posters.
 	for i := range issues {
-		if err = issues[i].GetPoster(); err != nil {
-			ctx.Handle(500, "GetPoster", fmt.Errorf("[#%d]%v", issues[i].ID, err))
-			return
-		}
-
-		if err = issues[i].GetLabels(); err != nil {
-			ctx.Handle(500, "GetLabels", fmt.Errorf("[#%d]%v", issues[i].ID, err))
-			return
-		}
-
 		if !ctx.IsSigned {
 			issues[i].IsRead = true
 			continue
@@ -244,7 +240,7 @@ func Issues(ctx *middleware.Context) {
 	ctx.HTML(200, ISSUES)
 }
 
-func renderAttachmentSettings(ctx *middleware.Context) {
+func renderAttachmentSettings(ctx *context.Context) {
 	ctx.Data["RequireDropzone"] = true
 	ctx.Data["IsAttachmentEnabled"] = setting.AttachmentEnabled
 	ctx.Data["AttachmentAllowedTypes"] = setting.AttachmentAllowedTypes
@@ -252,7 +248,7 @@ func renderAttachmentSettings(ctx *middleware.Context) {
 	ctx.Data["AttachmentMaxFiles"] = setting.AttachmentMaxFiles
 }
 
-func RetrieveRepoMilestonesAndAssignees(ctx *middleware.Context, repo *models.Repository) {
+func RetrieveRepoMilestonesAndAssignees(ctx *context.Context, repo *models.Repository) {
 	var err error
 	ctx.Data["OpenMilestones"], err = models.GetMilestones(repo.ID, -1, false)
 	if err != nil {
@@ -272,7 +268,7 @@ func RetrieveRepoMilestonesAndAssignees(ctx *middleware.Context, repo *models.Re
 	}
 }
 
-func RetrieveRepoMetas(ctx *middleware.Context, repo *models.Repository) []*models.Label {
+func RetrieveRepoMetas(ctx *context.Context, repo *models.Repository) []*models.Label {
 	if !ctx.Repo.IsWriter() {
 		return nil
 	}
@@ -292,7 +288,7 @@ func RetrieveRepoMetas(ctx *middleware.Context, repo *models.Repository) []*mode
 	return labels
 }
 
-func getFileContentFromDefaultBranch(ctx *middleware.Context, filename string) (string, bool) {
+func getFileContentFromDefaultBranch(ctx *context.Context, filename string) (string, bool) {
 	var r io.Reader
 	var bytes []byte
 
@@ -319,7 +315,7 @@ func getFileContentFromDefaultBranch(ctx *middleware.Context, filename string) (
 	return string(bytes), true
 }
 
-func setTemplateIfExists(ctx *middleware.Context, ctxDataKey string, possibleFiles []string) {
+func setTemplateIfExists(ctx *context.Context, ctxDataKey string, possibleFiles []string) {
 	for _, filename := range possibleFiles {
 		content, found := getFileContentFromDefaultBranch(ctx, filename)
 		if found {
@@ -329,7 +325,7 @@ func setTemplateIfExists(ctx *middleware.Context, ctxDataKey string, possibleFil
 	}
 }
 
-func NewIssue(ctx *middleware.Context) {
+func NewIssue(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.issues.new")
 	ctx.Data["PageIsIssueList"] = true
 	setTemplateIfExists(ctx, ISSUE_TEMPLATE_KEY, IssueTemplateCandidates)
@@ -345,7 +341,7 @@ func NewIssue(ctx *middleware.Context) {
 	ctx.HTML(200, ISSUE_NEW)
 }
 
-func ValidateRepoMetas(ctx *middleware.Context, form auth.CreateIssueForm) ([]int64, int64, int64) {
+func ValidateRepoMetas(ctx *context.Context, form auth.CreateIssueForm) ([]int64, int64, int64) {
 	var (
 		repo = ctx.Repo.Repository
 		err  error
@@ -399,7 +395,7 @@ func ValidateRepoMetas(ctx *middleware.Context, form auth.CreateIssueForm) ([]in
 	return labelIDs, milestoneID, assigneeID
 }
 
-func notifyWatchersAndMentions(ctx *middleware.Context, issue *models.Issue) {
+func MailWatchersAndMentions(ctx *context.Context, issue *models.Issue) error {
 	// Update mentions
 	mentions := markdown.MentionPattern.FindAllString(issue.Content, -1)
 	if len(mentions) > 0 {
@@ -408,8 +404,7 @@ func notifyWatchersAndMentions(ctx *middleware.Context, issue *models.Issue) {
 		}
 
 		if err := models.UpdateMentions(mentions, issue.ID); err != nil {
-			ctx.Handle(500, "UpdateMentions", err)
-			return
+			return fmt.Errorf("UpdateMentions: %v", err)
 		}
 	}
 
@@ -419,8 +414,7 @@ func notifyWatchersAndMentions(ctx *middleware.Context, issue *models.Issue) {
 	if setting.Service.EnableNotifyMail {
 		tos, err := mailer.SendIssueNotifyMail(ctx.User, ctx.Repo.Owner, repo, issue)
 		if err != nil {
-			ctx.Handle(500, "SendIssueNotifyMail", err)
-			return
+			return fmt.Errorf("SendIssueNotifyMail: %v", err)
 		}
 
 		tos = append(tos, ctx.User.LowerName)
@@ -434,13 +428,14 @@ func notifyWatchersAndMentions(ctx *middleware.Context, issue *models.Issue) {
 		}
 		if err = mailer.SendIssueMentionMail(ctx.Render, ctx.User, ctx.Repo.Owner,
 			repo, issue, models.GetUserEmailsByNames(newTos)); err != nil {
-			ctx.Handle(500, "SendIssueMentionMail", err)
-			return
+			return fmt.Errorf("SendIssueMentionMail: %v", err)
 		}
 	}
+
+	return nil
 }
 
-func NewIssuePost(ctx *middleware.Context, form auth.CreateIssueForm) {
+func NewIssuePost(ctx *context.Context, form auth.CreateIssueForm) {
 	ctx.Data["Title"] = ctx.Tr("repo.issues.new")
 	ctx.Data["PageIsIssueList"] = true
 	renderAttachmentSettings(ctx)
@@ -465,9 +460,8 @@ func NewIssuePost(ctx *middleware.Context, form auth.CreateIssueForm) {
 	}
 
 	issue := &models.Issue{
-		RepoID:      ctx.Repo.Repository.ID,
-		Index:       repo.NextIssueIndex(),
-		Name:        strings.TrimSpace(form.Title),
+		RepoID:      repo.ID,
+		Name:        form.Title,
 		PosterID:    ctx.User.Id,
 		Poster:      ctx.User,
 		MilestoneID: milestoneID,
@@ -477,10 +471,8 @@ func NewIssuePost(ctx *middleware.Context, form auth.CreateIssueForm) {
 	if err := models.NewIssue(repo, issue, labelIDs, attachments); err != nil {
 		ctx.Handle(500, "NewIssue", err)
 		return
-	}
-
-	notifyWatchersAndMentions(ctx, issue)
-	if ctx.Written() {
+	} else if err := MailWatchersAndMentions(ctx, issue); err != nil {
+		ctx.Handle(500, "MailWatchersAndMentions", err)
 		return
 	}
 
@@ -488,7 +480,7 @@ func NewIssuePost(ctx *middleware.Context, form auth.CreateIssueForm) {
 	ctx.Redirect(ctx.Repo.RepoLink + "/issues/" + com.ToStr(issue.Index))
 }
 
-func UploadIssueAttachment(ctx *middleware.Context) {
+func UploadIssueAttachment(ctx *context.Context) {
 	if !setting.AttachmentEnabled {
 		ctx.Error(404, "attachment is not enabled")
 		return
@@ -535,7 +527,7 @@ func UploadIssueAttachment(ctx *middleware.Context) {
 	})
 }
 
-func ViewIssue(ctx *middleware.Context) {
+func ViewIssue(ctx *context.Context) {
 	ctx.Data["RequireDropzone"] = true
 	renderAttachmentSettings(ctx)
 
@@ -560,14 +552,18 @@ func ViewIssue(ctx *middleware.Context) {
 	}
 
 	if issue.IsPull {
+		MustAllowPulls(ctx)
+		if ctx.Written() {
+			return
+		}
+		ctx.Data["PageIsPullList"] = true
+
 		if err = issue.GetPullRequest(); err != nil {
 			ctx.Handle(500, "GetPullRequest", err)
 			return
 		}
 
-		ctx.Data["PageIsPullList"] = true
 		ctx.Data["PageIsPullConversation"] = true
-		ctx.Data["HasForkedRepo"] = ctx.IsSigned && ctx.User.HasForkedRepo(ctx.Repo.Repository.ID)
 	} else {
 		MustEnableIssues(ctx)
 		if ctx.Written() {
@@ -576,10 +572,6 @@ func ViewIssue(ctx *middleware.Context) {
 		ctx.Data["PageIsIssueList"] = true
 	}
 
-	if err = issue.GetPoster(); err != nil {
-		ctx.Handle(500, "GetPoster", err)
-		return
-	}
 	issue.RenderedContent = string(markdown.Render([]byte(issue.Content), ctx.Repo.RepoLink,
 		ctx.Repo.Repository.ComposeMetas()))
 
@@ -600,10 +592,6 @@ func ViewIssue(ctx *middleware.Context) {
 
 	// Metas.
 	// Check labels.
-	if err = issue.GetLabels(); err != nil {
-		ctx.Handle(500, "GetLabels", err)
-		return
-	}
 	labelIDMark := make(map[int64]bool)
 	for i := range issue.Labels {
 		labelIDMark[issue.Labels[i].ID] = true
@@ -688,7 +676,7 @@ func ViewIssue(ctx *middleware.Context) {
 	ctx.Data["Participants"] = participants
 	ctx.Data["NumParticipants"] = len(participants)
 	ctx.Data["Issue"] = issue
-	ctx.Data["IsIssueOwner"] = ctx.Repo.IsWriter() || (ctx.IsSigned && (issue.IsPoster(ctx.User.Id) || ctx.User.IsAdmin))
+	ctx.Data["IsIssueOwner"] = ctx.Repo.IsWriter() || (ctx.IsSigned && issue.IsPoster(ctx.User.Id))
 	ctx.Data["SignInLink"] = setting.AppSubUrl + "/user/login"
 
 	ctx.Data["RequireHighlightJS"] = true
@@ -696,7 +684,7 @@ func ViewIssue(ctx *middleware.Context) {
 	ctx.HTML(200, ISSUE_VIEW)
 }
 
-func getActionIssue(ctx *middleware.Context) *models.Issue {
+func getActionIssue(ctx *context.Context) *models.Issue {
 	issue, err := models.GetIssueByIndex(ctx.Repo.Repository.ID, ctx.ParamsInt64(":index"))
 	if err != nil {
 		if models.IsErrIssueNotExist(err) {
@@ -709,13 +697,13 @@ func getActionIssue(ctx *middleware.Context) *models.Issue {
 	return issue
 }
 
-func UpdateIssueTitle(ctx *middleware.Context) {
+func UpdateIssueTitle(ctx *context.Context) {
 	issue := getActionIssue(ctx)
 	if ctx.Written() {
 		return
 	}
 
-	if !ctx.IsSigned || (ctx.User.Id != issue.PosterID && !ctx.Repo.IsWriter() && !ctx.User.IsAdmin) {
+	if !ctx.IsSigned || (!issue.IsPoster(ctx.User.Id) && !ctx.Repo.IsWriter()) {
 		ctx.Error(403)
 		return
 	}
@@ -736,13 +724,13 @@ func UpdateIssueTitle(ctx *middleware.Context) {
 	})
 }
 
-func UpdateIssueContent(ctx *middleware.Context) {
+func UpdateIssueContent(ctx *context.Context) {
 	issue := getActionIssue(ctx)
 	if ctx.Written() {
 		return
 	}
 
-	if !ctx.IsSigned || (ctx.User.Id != issue.PosterID && !ctx.Repo.IsWriter() && !ctx.User.IsAdmin) {
+	if !ctx.IsSigned || (ctx.User.Id != issue.PosterID && !ctx.Repo.IsWriter()) {
 		ctx.Error(403)
 		return
 	}
@@ -758,7 +746,7 @@ func UpdateIssueContent(ctx *middleware.Context) {
 	})
 }
 
-func UpdateIssueLabel(ctx *middleware.Context) {
+func UpdateIssueLabel(ctx *context.Context) {
 	issue := getActionIssue(ctx)
 	if ctx.Written() {
 		return
@@ -799,7 +787,7 @@ func UpdateIssueLabel(ctx *middleware.Context) {
 	})
 }
 
-func UpdateIssueMilestone(ctx *middleware.Context) {
+func UpdateIssueMilestone(ctx *context.Context) {
 	issue := getActionIssue(ctx)
 	if ctx.Written() {
 		return
@@ -826,7 +814,7 @@ func UpdateIssueMilestone(ctx *middleware.Context) {
 	})
 }
 
-func UpdateIssueAssignee(ctx *middleware.Context) {
+func UpdateIssueAssignee(ctx *context.Context) {
 	issue := getActionIssue(ctx)
 	if ctx.Written() {
 		return
@@ -852,7 +840,7 @@ func UpdateIssueAssignee(ctx *middleware.Context) {
 	})
 }
 
-func NewComment(ctx *middleware.Context, form auth.CreateCommentForm) {
+func NewComment(ctx *context.Context, form auth.CreateCommentForm) {
 	issue, err := models.GetIssueByIndex(ctx.Repo.Repository.ID, ctx.ParamsInt64(":index"))
 	if err != nil {
 		if models.IsErrIssueNotExist(err) {
@@ -945,7 +933,7 @@ func NewComment(ctx *middleware.Context, form auth.CreateCommentForm) {
 		return
 	}
 
-	notifyWatchersAndMentions(ctx, &models.Issue{
+	MailWatchersAndMentions(ctx, &models.Issue{
 		ID:      issue.ID,
 		Index:   issue.Index,
 		Name:    issue.Name,
@@ -958,7 +946,7 @@ func NewComment(ctx *middleware.Context, form auth.CreateCommentForm) {
 	log.Trace("Comment created: %d/%d/%d", ctx.Repo.Repository.ID, issue.ID, comment.ID)
 }
 
-func UpdateCommentContent(ctx *middleware.Context) {
+func UpdateCommentContent(ctx *context.Context) {
 	comment, err := models.GetCommentByID(ctx.ParamsInt64(":id"))
 	if err != nil {
 		if models.IsErrCommentNotExist(err) {
@@ -994,7 +982,7 @@ func UpdateCommentContent(ctx *middleware.Context) {
 	})
 }
 
-func Labels(ctx *middleware.Context) {
+func Labels(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.labels")
 	ctx.Data["PageIsIssueList"] = true
 	ctx.Data["PageIsLabels"] = true
@@ -1002,7 +990,7 @@ func Labels(ctx *middleware.Context) {
 	ctx.HTML(200, LABELS)
 }
 
-func NewLabel(ctx *middleware.Context, form auth.CreateLabelForm) {
+func NewLabel(ctx *context.Context, form auth.CreateLabelForm) {
 	ctx.Data["Title"] = ctx.Tr("repo.labels")
 	ctx.Data["PageIsLabels"] = true
 
@@ -1024,7 +1012,7 @@ func NewLabel(ctx *middleware.Context, form auth.CreateLabelForm) {
 	ctx.Redirect(ctx.Repo.RepoLink + "/labels")
 }
 
-func UpdateLabel(ctx *middleware.Context, form auth.CreateLabelForm) {
+func UpdateLabel(ctx *context.Context, form auth.CreateLabelForm) {
 	l, err := models.GetLabelByID(form.ID)
 	if err != nil {
 		switch {
@@ -1046,7 +1034,7 @@ func UpdateLabel(ctx *middleware.Context, form auth.CreateLabelForm) {
 	ctx.Redirect(ctx.Repo.RepoLink + "/labels")
 }
 
-func DeleteLabel(ctx *middleware.Context) {
+func DeleteLabel(ctx *context.Context) {
 	if err := models.DeleteLabel(ctx.Repo.Repository.ID, ctx.QueryInt64("id")); err != nil {
 		ctx.Flash.Error("DeleteLabel: " + err.Error())
 	} else {
@@ -1059,7 +1047,7 @@ func DeleteLabel(ctx *middleware.Context) {
 	return
 }
 
-func Milestones(ctx *middleware.Context) {
+func Milestones(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.milestones")
 	ctx.Data["PageIsIssueList"] = true
 	ctx.Data["PageIsMilestones"] = true
@@ -1089,7 +1077,6 @@ func Milestones(ctx *middleware.Context) {
 	}
 	for _, m := range miles {
 		m.RenderedContent = string(markdown.Render([]byte(m.Content), ctx.Repo.RepoLink, ctx.Repo.Repository.ComposeMetas()))
-		m.CalOpenIssues()
 	}
 	ctx.Data["Milestones"] = miles
 
@@ -1103,7 +1090,7 @@ func Milestones(ctx *middleware.Context) {
 	ctx.HTML(200, MILESTONE)
 }
 
-func NewMilestone(ctx *middleware.Context) {
+func NewMilestone(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.milestones.new")
 	ctx.Data["PageIsIssueList"] = true
 	ctx.Data["PageIsMilestones"] = true
@@ -1112,7 +1099,7 @@ func NewMilestone(ctx *middleware.Context) {
 	ctx.HTML(200, MILESTONE_NEW)
 }
 
-func NewMilestonePost(ctx *middleware.Context, form auth.CreateMilestoneForm) {
+func NewMilestonePost(ctx *context.Context, form auth.CreateMilestoneForm) {
 	ctx.Data["Title"] = ctx.Tr("repo.milestones.new")
 	ctx.Data["PageIsIssueList"] = true
 	ctx.Data["PageIsMilestones"] = true
@@ -1148,7 +1135,7 @@ func NewMilestonePost(ctx *middleware.Context, form auth.CreateMilestoneForm) {
 	ctx.Redirect(ctx.Repo.RepoLink + "/milestones")
 }
 
-func EditMilestone(ctx *middleware.Context) {
+func EditMilestone(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("repo.milestones.edit")
 	ctx.Data["PageIsMilestones"] = true
 	ctx.Data["PageIsEditMilestone"] = true
@@ -1172,7 +1159,7 @@ func EditMilestone(ctx *middleware.Context) {
 	ctx.HTML(200, MILESTONE_NEW)
 }
 
-func EditMilestonePost(ctx *middleware.Context, form auth.CreateMilestoneForm) {
+func EditMilestonePost(ctx *context.Context, form auth.CreateMilestoneForm) {
 	ctx.Data["Title"] = ctx.Tr("repo.milestones.edit")
 	ctx.Data["PageIsMilestones"] = true
 	ctx.Data["PageIsEditMilestone"] = true
@@ -1215,7 +1202,7 @@ func EditMilestonePost(ctx *middleware.Context, form auth.CreateMilestoneForm) {
 	ctx.Redirect(ctx.Repo.RepoLink + "/milestones")
 }
 
-func ChangeMilestonStatus(ctx *middleware.Context) {
+func ChangeMilestonStatus(ctx *context.Context) {
 	m, err := models.GetMilestoneByID(ctx.ParamsInt64(":id"))
 	if err != nil {
 		if models.IsErrMilestoneNotExist(err) {
@@ -1249,7 +1236,7 @@ func ChangeMilestonStatus(ctx *middleware.Context) {
 	}
 }
 
-func DeleteMilestone(ctx *middleware.Context) {
+func DeleteMilestone(ctx *context.Context) {
 	if err := models.DeleteMilestoneByID(ctx.QueryInt64("id")); err != nil {
 		ctx.Flash.Error("DeleteMilestoneByID: " + err.Error())
 	} else {

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
-package middleware
+package context
 
 import (
 	"fmt"
@@ -17,6 +17,56 @@ import (
 	"github.com/gogits/gogs/modules/log"
 	"github.com/gogits/gogs/modules/setting"
 )
+
+type PullRequest struct {
+	BaseRepo *models.Repository
+	Allowed  bool
+	SameRepo bool
+	HeadInfo string // [<user>:]<branch>
+}
+
+type Repository struct {
+	AccessMode   models.AccessMode
+	IsWatching   bool
+	IsViewBranch bool
+	IsViewTag    bool
+	IsViewCommit bool
+	Repository   *models.Repository
+	Owner        *models.User
+	Commit       *git.Commit
+	Tag          *git.Tag
+	GitRepo      *git.Repository
+	BranchName   string
+	TagName      string
+	TreeName     string
+	CommitID     string
+	RepoLink     string
+	CloneLink    models.CloneLink
+	CommitsCount int64
+	Mirror       *models.Mirror
+
+	PullRequest *PullRequest
+}
+
+// IsOwner returns true if current user is the owner of repository.
+func (r *Repository) IsOwner() bool {
+	return r.AccessMode >= models.ACCESS_MODE_OWNER
+}
+
+// IsAdmin returns true if current user has admin or higher access of repository.
+func (r *Repository) IsAdmin() bool {
+	return r.AccessMode >= models.ACCESS_MODE_ADMIN
+}
+
+// IsWriter returns true if current user has write or higher access of repository.
+func (r *Repository) IsWriter() bool {
+	return r.AccessMode >= models.ACCESS_MODE_WRITE
+}
+
+// HasAccess returns true if the current user has at least read access for this repository
+func (r *Repository) HasAccess() bool {
+	return r.AccessMode >= models.ACCESS_MODE_READ
+}
 
 func RetrieveBaseRepo(ctx *Context, repo *models.Repository) {
 	// Non-fork repository will not return error in this method.
@@ -142,32 +192,6 @@ func RepoAssignment(args ...bool) macaron.Handler {
 		ctx.Data["IsRepositoryAdmin"] = ctx.Repo.IsAdmin()
 		ctx.Data["IsRepositoryWriter"] = ctx.Repo.IsWriter()
 
-		if repo.IsFork {
-			RetrieveBaseRepo(ctx, repo)
-			if ctx.Written() {
-				return
-			}
-		}
-
-		// People who have push access and propose a new pull request.
-		if ctx.Repo.IsWriter() {
-			// Pull request is allowed if this is a fork repository
-			// and base repository accepts pull requests.
-			if repo.BaseRepo != nil {
-				if repo.BaseRepo.AllowsPulls() {
-					ctx.Data["CanPullRequest"] = true
-					ctx.Data["BaseRepo"] = repo.BaseRepo
-				}
-			} else {
-				// Or, this is repository accepts pull requests between branches.
-				if repo.AllowsPulls() {
-					ctx.Data["CanPullRequest"] = true
-					ctx.Data["BaseRepo"] = repo
-					ctx.Data["IsBetweenBranches"] = true
-				}
-			}
-		}
-
 		ctx.Data["DisableSSH"] = setting.SSH.Disabled
 		ctx.Data["CloneLink"] = repo.CloneLink()
 		ctx.Data["WikiCloneLink"] = repo.WikiCloneLink()
@@ -209,9 +233,39 @@ func RepoAssignment(args ...bool) macaron.Handler {
 				ctx.Repo.BranchName = brs[0]
 			}
 		}
-
 		ctx.Data["BranchName"] = ctx.Repo.BranchName
 		ctx.Data["CommitID"] = ctx.Repo.CommitID
+
+		if repo.IsFork {
+			RetrieveBaseRepo(ctx, repo)
+			if ctx.Written() {
+				return
+			}
+		}
+
+		// People who have push access and propose a new pull request.
+		if ctx.Repo.IsWriter() {
+			// Pull request is allowed if this is a fork repository
+			// and base repository accepts pull requests.
+			if repo.BaseRepo != nil {
+				if repo.BaseRepo.AllowsPulls() {
+					ctx.Data["BaseRepo"] = repo.BaseRepo
+					ctx.Repo.PullRequest.BaseRepo = repo.BaseRepo
+					ctx.Repo.PullRequest.Allowed = true
+					ctx.Repo.PullRequest.HeadInfo = ctx.Repo.Owner.Name + ":" + ctx.Repo.BranchName
+				}
+			} else {
+				// Or, this is repository accepts pull requests between branches.
+				if repo.AllowsPulls() {
+					ctx.Data["BaseRepo"] = repo
+					ctx.Repo.PullRequest.BaseRepo = repo
+					ctx.Repo.PullRequest.Allowed = true
+					ctx.Repo.PullRequest.SameRepo = true
+					ctx.Repo.PullRequest.HeadInfo = ctx.Repo.BranchName
+				}
+			}
+		}
+		ctx.Data["PullRequestCtx"] = ctx.Repo.PullRequest
 
 		if ctx.Query("go-get") == "1" {
 			ctx.Data["GoGetImport"] = path.Join(setting.Domain, setting.AppSubUrl, owner.Name, repo.Name)

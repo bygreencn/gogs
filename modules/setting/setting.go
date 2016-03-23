@@ -54,7 +54,7 @@ var (
 	AppSubUrl      string
 	AppSubUrlDepth int // Number of slashes
 	AppPath        string
-	AppDataPath    = "data"
+	AppDataPath    string
 
 	// Server settings
 	Protocol           Scheme
@@ -156,7 +156,8 @@ var (
 	CacheConn     string
 
 	// Session settings
-	SessionConfig session.Options
+	SessionConfig  session.Options
+	CSRFCookieName = "_csrf"
 
 	// Git settings
 	Git struct {
@@ -334,6 +335,7 @@ func NewContext() {
 	OfflineMode = sec.Key("OFFLINE_MODE").MustBool()
 	DisableRouterLog = sec.Key("DISABLE_ROUTER_LOG").MustBool()
 	StaticRootPath = sec.Key("STATIC_ROOT_PATH").MustString(workDir)
+	AppDataPath = sec.Key("APP_DATA_PATH").MustString("data")
 	EnableGzip = sec.Key("ENABLE_GZIP").MustBool()
 
 	switch sec.Key("LANDING_PAGE").MustString("home") {
@@ -358,12 +360,6 @@ func NewContext() {
 			log.Fatal(4, "Fail to create '%s': %v", SSH.RootPath, err)
 		} else if err = os.MkdirAll(SSH.KeyTestPath, 0644); err != nil {
 			log.Fatal(4, "Fail to create '%s': %v", SSH.KeyTestPath, err)
-		}
-
-		if !filepath.IsAbs(SSH.KeygenPath) {
-			if _, err := exec.LookPath(SSH.KeygenPath); err != nil {
-				log.Fatal(4, "Fail to test '%s' command: %v (forgotten install?)", SSH.KeygenPath, err)
-			}
 		}
 	}
 

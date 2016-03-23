@@ -2,7 +2,7 @@
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
-package middleware
+package context
 
 import (
 	"strings"
@@ -12,6 +12,17 @@ import (
 	"github.com/gogits/gogs/models"
 	"github.com/gogits/gogs/modules/setting"
 )
+
+type Organization struct {
+	IsOwner      bool
+	IsMember     bool
+	IsTeamMember bool // Is member of team.
+	IsTeamAdmin  bool // In owner team or team that has admin permission level.
+	Organization *models.User
+	OrgLink      string
+
+	Team *models.Team
+}
 
 func HandleOrgAssignment(ctx *Context, args ...bool) {
 	var (
@@ -90,7 +101,7 @@ func HandleOrgAssignment(ctx *Context, args ...bool) {
 	if ctx.Org.IsMember {
 		if ctx.Org.IsOwner {
 			if err := org.GetTeams(); err != nil {
-				ctx.Handle(500, "GetUserTeams", err)
+				ctx.Handle(500, "GetTeams", err)
 				return
 			}
 		} else {

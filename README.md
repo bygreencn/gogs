@@ -3,7 +3,7 @@ Gogs - Go Git Service [![Build Status](https://travis-ci.org/gogits/gogs.svg?bra
 
 ![](https://github.com/gogits/gogs/blob/master/public/img/gogs-large-resize.png?raw=true)
 
-##### Current version: 0.9.0
+##### Current version: 0.9.13
 
 | Web | UI  | Preview  |
 |:-------------:|:-------:|:-------:|
@@ -105,6 +105,7 @@ There are 5 ways to install Gogs:
 - [Puppet](https://forge.puppetlabs.com/Siteminds/gogs) (IT)
 - [Kanboard](http://kanboard.net/plugin/gogs-webhook) (Project Management)
 - [BearyChat](https://bearychat.com/) (Team Communication)
+- [HiWork](http://www.hiwork.cc/) (Team Communication)
 
 ### Product Support
 

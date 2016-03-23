@@ -52,9 +52,11 @@ type Comment struct {
 	IssueID         int64 `xorm:"INDEX"`
 	CommitID        int64
 	Line            int64
-	Content         string    `xorm:"TEXT"`
-	RenderedContent string    `xorm:"-"`
-	Created         time.Time `xorm:"CREATED"`
+	Content         string `xorm:"TEXT"`
+	RenderedContent string `xorm:"-"`
+
+	Created     time.Time `xorm:"-"`
+	CreatedUnix int64
 
 	// Reference issue in commit message
 	CommitSHA string `xorm:"VARCHAR(40)"`
@@ -63,6 +65,10 @@ type Comment struct {
 
 	// For view issue page.
 	ShowTag CommentTag `xorm:"-"`
+}
+
+func (c *Comment) BeforeInsert() {
+	c.CreatedUnix = time.Now().UTC().Unix()
 }
 
 func (c *Comment) AfterSet(colName string, _ xorm.Cell) {
@@ -84,8 +90,8 @@ func (c *Comment) AfterSet(colName string, _ xorm.Cell) {
 				log.Error(3, "GetUserByID[%d]: %v", c.ID, err)
 			}
 		}
-	case "created":
-		c.Created = regulateTimeZone(c.Created)
+	case "created_unix":
+		c.Created = time.Unix(c.CreatedUnix, 0).Local()
 	}
 }
 
@@ -196,9 +202,11 @@ func createComment(e *xorm.Session, opts *CreateCommentOptions) (_ *Comment, err
 		}
 	}
 
-	// Notify watchers for whatever action comes in
-	if err = notifyWatchers(e, act); err != nil {
-		return nil, fmt.Errorf("notifyWatchers: %v", err)
+	// Notify watchers for whatever action comes in, ignore if no action type
+	if act.OpType > 0 {
+		if err = notifyWatchers(e, act); err != nil {
+			return nil, fmt.Errorf("notifyWatchers: %v", err)
+		}
 	}
 
 	return comment, nil
@@ -302,7 +310,7 @@ func GetCommentByID(id int64) (*Comment, error) {
 // GetCommentsByIssueID returns all comments of issue by given ID.
 func GetCommentsByIssueID(issueID int64) ([]*Comment, error) {
 	comments := make([]*Comment, 0, 10)
-	return comments, x.Where("issue_id=?", issueID).Asc("created").Find(&comments)
+	return comments, x.Where("issue_id=?", issueID).Asc("created_unix").Find(&comments)
 }
 
 // UpdateComment updates information of comment.

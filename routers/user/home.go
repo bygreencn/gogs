@@ -13,7 +13,7 @@ import (
 
 	"github.com/gogits/gogs/models"
 	"github.com/gogits/gogs/modules/base"
-	"github.com/gogits/gogs/modules/middleware"
+	"github.com/gogits/gogs/modules/context"
 	"github.com/gogits/gogs/modules/setting"
 )
 
@@ -24,7 +24,7 @@ const (
 	ORG_HOME  base.TplName = "org/home"
 )
 
-func getDashboardContextUser(ctx *middleware.Context) *models.User {
+func getDashboardContextUser(ctx *context.Context) *models.User {
 	ctxUser := ctx.User
 	orgName := ctx.Params(":org")
 	if len(orgName) > 0 {
@@ -51,7 +51,7 @@ func getDashboardContextUser(ctx *middleware.Context) *models.User {
 	return ctxUser
 }
 
-func retrieveFeeds(ctx *middleware.Context, ctxUserID, userID, offset int64, isProfile bool) {
+func retrieveFeeds(ctx *context.Context, ctxUserID, userID, offset int64, isProfile bool) {
 	actions, err := models.GetFeeds(ctxUserID, userID, offset, isProfile)
 	if err != nil {
 		ctx.Handle(500, "GetFeeds", err)
@@ -82,12 +82,12 @@ func retrieveFeeds(ctx *middleware.Context, ctxUserID, userID, offset int64, isP
 	ctx.Data["Feeds"] = feeds
 }
 
-func Dashboard(ctx *middleware.Context) {
-	ctx.Data["Title"] = ctx.Tr("dashboard")
+func Dashboard(ctx *context.Context) {
+	ctxUser := getDashboardContextUser(ctx)
+	ctx.Data["Title"] = ctxUser.DisplayName() + " - " + ctx.Tr("dashboard")
 	ctx.Data["PageIsDashboard"] = true
 	ctx.Data["PageIsNews"] = true
 
-	ctxUser := getDashboardContextUser(ctx)
 	if ctx.Written() {
 		return
 	}
@@ -147,7 +147,7 @@ func Dashboard(ctx *middleware.Context) {
 	ctx.HTML(200, DASHBOARD)
 }
 
-func Issues(ctx *middleware.Context) {
+func Issues(ctx *context.Context) {
 	isPullList := ctx.Params(":type") == "pulls"
 	if isPullList {
 		ctx.Data["Title"] = ctx.Tr("pull_requests")
@@ -284,11 +284,6 @@ func Issues(ctx *middleware.Context) {
 			ctx.Handle(500, "GetOwner", fmt.Errorf("[#%d]%v", issues[i].ID, err))
 			return
 		}
-
-		if err = issues[i].GetPoster(); err != nil {
-			ctx.Handle(500, "GetPoster", fmt.Errorf("[#%d]%v", issues[i].ID, err))
-			return
-		}
 	}
 	ctx.Data["Issues"] = issues
 
@@ -306,7 +301,7 @@ func Issues(ctx *middleware.Context) {
 	ctx.HTML(200, ISSUES)
 }
 
-func ShowSSHKeys(ctx *middleware.Context, uid int64) {
+func ShowSSHKeys(ctx *context.Context, uid int64) {
 	keys, err := models.ListPublicKeys(uid)
 	if err != nil {
 		ctx.Handle(500, "ListPublicKeys", err)
@@ -321,9 +316,9 @@ func ShowSSHKeys(ctx *middleware.Context, uid int64) {
 	ctx.PlainText(200, buf.Bytes())
 }
 
-func showOrgProfile(ctx *middleware.Context) {
+func showOrgProfile(ctx *context.Context) {
 	ctx.SetParams(":org", ctx.Params(":username"))
-	middleware.HandleOrgAssignment(ctx)
+	context.HandleOrgAssignment(ctx)
 	if ctx.Written() {
 		return
 	}
@@ -332,11 +327,20 @@ func showOrgProfile(ctx *middleware.Context) {
 	ctx.Data["Title"] = org.FullName
 
 	if ctx.IsSigned {
-		if err := org.GetUserRepositories(ctx.User.Id); err != nil {
-			ctx.Handle(500, "GetUserRepositories", err)
-			return
+		if ctx.User.IsAdmin {
+			repos, err := models.GetRepositories(org.Id, true)
+			if err != nil {
+				ctx.Handle(500, "GetRepositoriesAsAdmin", err)
+				return
+			}
+			ctx.Data["Repos"] = repos
+		} else {
+			if err := org.GetUserRepositories(ctx.User.Id); err != nil {
+				ctx.Handle(500, "GetUserRepositories", err)
+				return
+			}
+			ctx.Data["Repos"] = org.Repos
 		}
-		ctx.Data["Repos"] = org.Repos
 	} else {
 		repos, err := models.GetRepositories(org.Id, false)
 		if err != nil {
@@ -357,7 +361,7 @@ func showOrgProfile(ctx *middleware.Context) {
 	ctx.HTML(200, ORG_HOME)
 }
 
-func Email2User(ctx *middleware.Context) {
+func Email2User(ctx *context.Context) {
 	u, err := models.GetUserByEmail(ctx.Query("email"))
 	if err != nil {
 		if models.IsErrUserNotExist(err) {
