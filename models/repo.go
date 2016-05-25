@@ -129,8 +129,7 @@ func NewRepoContext() {
 		log.Fatal(4, "Fail to execute 'git config --global core.quotepath false': %s", stderr)
 	}
 
-	// Clean up temporary data.
-	os.RemoveAll(filepath.Join(setting.AppDataPath, "tmp"))
+	RemoveAllWithNotice("Clean up repository temporary data", filepath.Join(setting.AppDataPath, "tmp"))
 }
 
 // Repository represents a git repository.
@@ -171,6 +170,7 @@ type Repository struct {
 	EnableIssues          bool `xorm:"NOT NULL DEFAULT true"`
 	EnableExternalTracker bool
 	ExternalTrackerFormat string
+	ExternalTrackerStyle  string
 	ExternalMetas         map[string]string `xorm:"-"`
 	EnablePulls           bool              `xorm:"NOT NULL DEFAULT true"`
 
@@ -206,6 +206,10 @@ func (repo *Repository) AfterSet(colName string, _ xorm.Cell) {
 		repo.NumOpenPulls = repo.NumPulls - repo.NumClosedPulls
 	case "num_closed_milestones":
 		repo.NumOpenMilestones = repo.NumMilestones - repo.NumClosedMilestones
+	case "external_tracker_style":
+		if len(repo.ExternalTrackerStyle) == 0 {
+			repo.ExternalTrackerStyle = markdown.ISSUE_NAME_STYLE_NUMERIC
+		}
 	case "created_unix":
 		repo.Created = time.Unix(repo.CreatedUnix, 0).Local()
 	case "updated_unix":
@@ -255,6 +259,13 @@ func (repo *Repository) ComposeMetas() map[string]string {
 			"user":   repo.MustOwner().Name,
 			"repo":   repo.Name,
 		}
+		switch repo.ExternalTrackerStyle {
+		case markdown.ISSUE_NAME_STYLE_ALPHANUMERIC:
+			repo.ExternalMetas["style"] = markdown.ISSUE_NAME_STYLE_ALPHANUMERIC
+		default:
+			repo.ExternalMetas["style"] = markdown.ISSUE_NAME_STYLE_NUMERIC
+		}
+
 	}
 	return repo.ExternalMetas
 }
