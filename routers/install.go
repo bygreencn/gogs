@@ -169,6 +169,7 @@ func Install(ctx *context.Context) {
 	// Server and other services settings
 	form.OfflineMode = setting.OfflineMode
 	form.DisableGravatar = setting.DisableGravatar
+	form.EnableFederatedAvatar = setting.EnableFederatedAvatar
 	form.DisableRegistration = setting.Service.DisableRegistration
 	form.EnableCaptcha = setting.Service.EnableCaptcha
 	form.RequireSignInView = setting.Service.RequireSignInView
@@ -227,7 +228,7 @@ func InstallPost(ctx *context.Context, form auth.InstallForm) {
 	if err := models.NewTestEngine(x); err != nil {
 		if strings.Contains(err.Error(), `Unknown database type: sqlite3`) {
 			ctx.Data["Err_DbType"] = true
-			ctx.RenderWithErr(ctx.Tr("install.sqlite3_not_available", "http://gogs.io/docs/installation/install_from_binary.html"), INSTALL, &form)
+			ctx.RenderWithErr(ctx.Tr("install.sqlite3_not_available", "https://gogs.io/docs/installation/install_from_binary.html"), INSTALL, &form)
 		} else {
 			ctx.Data["Err_DbSetting"] = true
 			ctx.RenderWithErr(ctx.Tr("install.invalid_db_setting", err), INSTALL, &form)
@@ -251,11 +252,10 @@ func InstallPost(ctx *context.Context, form auth.InstallForm) {
 		return
 	}
 
-	// Check run user.
-	curUser := user.CurrentUsername()
-	if form.RunUser != curUser {
+	currentUser, match := setting.IsRunUserMatchCurrentUser(form.RunUser)
+	if !match {
 		ctx.Data["Err_RunUser"] = true
-		ctx.RenderWithErr(ctx.Tr("install.run_user_not_match", form.RunUser, curUser), INSTALL, &form)
+		ctx.RenderWithErr(ctx.Tr("install.run_user_not_match", form.RunUser, currentUser), INSTALL, &form)
 		return
 	}
 
@@ -329,6 +329,7 @@ func InstallPost(ctx *context.Context, form auth.InstallForm) {
 
 	cfg.Section("server").Key("OFFLINE_MODE").SetValue(com.ToStr(form.OfflineMode))
 	cfg.Section("picture").Key("DISABLE_GRAVATAR").SetValue(com.ToStr(form.DisableGravatar))
+	cfg.Section("picture").Key("ENABLE_FEDERATED_AVATAR").SetValue(com.ToStr(form.EnableFederatedAvatar))
 	cfg.Section("service").Key("DISABLE_REGISTRATION").SetValue(com.ToStr(form.DisableRegistration))
 	cfg.Section("service").Key("ENABLE_CAPTCHA").SetValue(com.ToStr(form.EnableCaptcha))
 	cfg.Section("service").Key("REQUIRE_SIGNIN_VIEW").SetValue(com.ToStr(form.RequireSignInView))
@@ -374,7 +375,7 @@ func InstallPost(ctx *context.Context, form auth.InstallForm) {
 		}
 
 		// Auto-login for admin
-		ctx.Session.Set("uid", u.Id)
+		ctx.Session.Set("uid", u.ID)
 		ctx.Session.Set("uname", u.Name)
 	}
 

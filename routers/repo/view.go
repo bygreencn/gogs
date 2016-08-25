@@ -6,6 +6,8 @@ package repo
 
 import (
 	"bytes"
+	"fmt"
+	gotemplate "html/template"
 	"io/ioutil"
 	"path"
 	"strings"
@@ -19,6 +21,7 @@ import (
 	"github.com/gogits/gogs/modules/context"
 	"github.com/gogits/gogs/modules/log"
 	"github.com/gogits/gogs/modules/markdown"
+	"github.com/gogits/gogs/modules/setting"
 	"github.com/gogits/gogs/modules/template"
 	"github.com/gogits/gogs/modules/template/highlight"
 )
@@ -30,7 +33,11 @@ const (
 )
 
 func Home(ctx *context.Context) {
-	ctx.Data["Title"] = ctx.Repo.Repository.Name
+	title := ctx.Repo.Repository.Owner.Name + "/" + ctx.Repo.Repository.Name
+	if len(ctx.Repo.Repository.Description) > 0 {
+		title += ": " + ctx.Repo.Repository.Description
+	}
+	ctx.Data["Title"] = title
 	ctx.Data["PageIsViewCode"] = true
 	ctx.Data["RequireHighlightJS"] = true
 
@@ -100,20 +107,40 @@ func Home(ctx *context.Context) {
 			case isImageFile:
 				ctx.Data["IsImageFile"] = true
 			case isTextFile:
-				d, _ := ioutil.ReadAll(dataRc)
-				buf = append(buf, d...)
-				readmeExist := markdown.IsMarkdownFile(blob.Name()) || markdown.IsReadmeFile(blob.Name())
-				ctx.Data["ReadmeExist"] = readmeExist
-				if readmeExist {
-					ctx.Data["FileContent"] = string(markdown.Render(buf, path.Dir(treeLink), ctx.Repo.Repository.ComposeMetas()))
+				if blob.Size() >= setting.UI.MaxDisplayFileSize {
+					ctx.Data["IsFileTooLarge"] = true
 				} else {
-					if err, content := template.ToUtf8WithErr(buf); err != nil {
-						if err != nil {
-							log.Error(4, "Convert content encoding: %s", err)
-						}
-						ctx.Data["FileContent"] = string(buf)
+					ctx.Data["IsFileTooLarge"] = false
+					d, _ := ioutil.ReadAll(dataRc)
+					buf = append(buf, d...)
+					readmeExist := markdown.IsMarkdownFile(blob.Name()) || markdown.IsReadmeFile(blob.Name())
+					ctx.Data["ReadmeExist"] = readmeExist
+					if readmeExist {
+						ctx.Data["FileContent"] = string(markdown.Render(buf, path.Dir(treeLink), ctx.Repo.Repository.ComposeMetas()))
 					} else {
-						ctx.Data["FileContent"] = content
+						// Building code view blocks with line number on server side.
+						var filecontent string
+						if err, content := template.ToUTF8WithErr(buf); err != nil {
+							if err != nil {
+								log.Error(4, "ToUTF8WithErr: %s", err)
+							}
+							filecontent = string(buf)
+						} else {
+							filecontent = content
+						}
+
+						var output bytes.Buffer
+						lines := strings.Split(filecontent, "\n")
+						for index, line := range lines {
+							output.WriteString(fmt.Sprintf(`<li class="L%d" rel="L%d">%s</li>`, index+1, index+1, gotemplate.HTMLEscapeString(line)) + "\n")
+						}
+						ctx.Data["FileContent"] = gotemplate.HTML(output.String())
+
+						output.Reset()
+						for i := 0; i < len(lines); i++ {
+							output.WriteString(fmt.Sprintf(`<span id="L%d">%d</span>`, i+1, i+1))
+						}
+						ctx.Data["LineNums"] = gotemplate.HTML(output.String())
 					}
 				}
 			}
@@ -199,21 +226,21 @@ func Home(ctx *context.Context) {
 	ctx.Data["Reponame"] = repoName
 
 	var treenames []string
-	Paths := make([]string, 0)
+	paths := make([]string, 0)
 
 	if len(treename) > 0 {
 		treenames = strings.Split(treename, "/")
-		for i, _ := range treenames {
-			Paths = append(Paths, strings.Join(treenames[0:i+1], "/"))
+		for i := range treenames {
+			paths = append(paths, strings.Join(treenames[0:i+1], "/"))
 		}
 
 		ctx.Data["HasParentPath"] = true
-		if len(Paths)-2 >= 0 {
-			ctx.Data["ParentPath"] = "/" + Paths[len(Paths)-2]
+		if len(paths)-2 >= 0 {
+			ctx.Data["ParentPath"] = "/" + paths[len(paths)-2]
 		}
 	}
 
-	ctx.Data["Paths"] = Paths
+	ctx.Data["Paths"] = paths
 	ctx.Data["TreeName"] = treename
 	ctx.Data["Treenames"] = treenames
 	ctx.Data["TreePath"] = treePath

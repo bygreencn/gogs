@@ -89,7 +89,7 @@ type Action struct {
 }
 
 func (a *Action) BeforeInsert() {
-	a.CreatedUnix = time.Now().UTC().Unix()
+	a.CreatedUnix = time.Now().Unix()
 }
 
 func (a *Action) AfterSet(colName string, _ xorm.Cell) {
@@ -184,7 +184,7 @@ func (a *Action) GetIssueContent() string {
 
 func newRepoAction(e Engine, u *User, repo *Repository) (err error) {
 	if err = notifyWatchers(e, &Action{
-		ActUserID:    u.Id,
+		ActUserID:    u.ID,
 		ActUserName:  u.Name,
 		ActEmail:     u.Email,
 		OpType:       ACTION_CREATE_REPO,
@@ -193,7 +193,7 @@ func newRepoAction(e Engine, u *User, repo *Repository) (err error) {
 		RepoName:     repo.Name,
 		IsPrivate:    repo.IsPrivate,
 	}); err != nil {
-		return fmt.Errorf("notify watchers '%d/%d': %v", u.Id, repo.ID, err)
+		return fmt.Errorf("notify watchers '%d/%d': %v", u.ID, repo.ID, err)
 	}
 
 	log.Trace("action.newRepoAction: %s/%s", u.Name, repo.Name)
@@ -207,7 +207,7 @@ func NewRepoAction(u *User, repo *Repository) (err error) {
 
 func renameRepoAction(e Engine, actUser *User, oldRepoName string, repo *Repository) (err error) {
 	if err = notifyWatchers(e, &Action{
-		ActUserID:    actUser.Id,
+		ActUserID:    actUser.ID,
 		ActUserName:  actUser.Name,
 		ActEmail:     actUser.Email,
 		OpType:       ACTION_RENAME_REPO,
@@ -234,10 +234,13 @@ func issueIndexTrimRight(c rune) bool {
 }
 
 type PushCommit struct {
-	Sha1        string
-	Message     string
-	AuthorEmail string
-	AuthorName  string
+	Sha1           string
+	Message        string
+	AuthorEmail    string
+	AuthorName     string
+	CommitterEmail string
+	CommitterName  string
+	Timestamp      time.Time
 }
 
 type PushCommits struct {
@@ -256,21 +259,33 @@ func NewPushCommits() *PushCommits {
 
 func (pc *PushCommits) ToApiPayloadCommits(repoLink string) []*api.PayloadCommit {
 	commits := make([]*api.PayloadCommit, len(pc.Commits))
-	for i, cmt := range pc.Commits {
-		author_username := ""
-		author, err := GetUserByEmail(cmt.AuthorEmail)
+	for i, commit := range pc.Commits {
+		authorUsername := ""
+		author, err := GetUserByEmail(commit.AuthorEmail)
 		if err == nil {
-			author_username = author.Name
+			authorUsername = author.Name
+		}
+		committerUsername := ""
+		committer, err := GetUserByEmail(commit.CommitterEmail)
+		if err == nil {
+			// TODO: check errors other than email not found.
+			committerUsername = committer.Name
 		}
 		commits[i] = &api.PayloadCommit{
-			ID:      cmt.Sha1,
-			Message: cmt.Message,
-			URL:     fmt.Sprintf("%s/commit/%s", repoLink, cmt.Sha1),
+			ID:      commit.Sha1,
+			Message: commit.Message,
+			URL:     fmt.Sprintf("%s/commit/%s", repoLink, commit.Sha1),
 			Author: &api.PayloadAuthor{
-				Name:     cmt.AuthorName,
-				Email:    cmt.AuthorEmail,
-				UserName: author_username,
+				Name:     commit.AuthorName,
+				Email:    commit.AuthorEmail,
+				UserName: authorUsername,
 			},
+			Committer: &api.PayloadCommitter{
+				Name:     commit.CommitterName,
+				Email:    commit.CommitterEmail,
+				UserName: committerUsername,
+			},
+			Timestamp: commit.Timestamp,
 		}
 	}
 	return commits
@@ -288,7 +303,7 @@ func (push *PushCommits) AvatarLink(email string) string {
 				log.Error(4, "GetUserByEmail: %v", err)
 			}
 		} else {
-			push.avatars[email] = u.AvatarLink()
+			push.avatars[email] = u.RelAvatarLink()
 		}
 	}
 
@@ -470,8 +485,8 @@ func CommitRepoAction(
 		}
 	}
 
-	if len(commit.Commits) > setting.FeedMaxCommitNum {
-		commit.Commits = commit.Commits[:setting.FeedMaxCommitNum]
+	if len(commit.Commits) > setting.UI.FeedMaxCommitNum {
+		commit.Commits = commit.Commits[:setting.UI.FeedMaxCommitNum]
 	}
 
 	bs, err := json.Marshal(commit)
@@ -482,14 +497,14 @@ func CommitRepoAction(
 	refName := git.RefEndName(refFullName)
 
 	if err = NotifyWatchers(&Action{
-		ActUserID:    u.Id,
+		ActUserID:    u.ID,
 		ActUserName:  userName,
 		ActEmail:     actEmail,
 		OpType:       opType,
 		Content:      string(bs),
 		RepoID:       repo.ID,
 		RepoUserName: repoUserName,
-		RepoName:     repoName,
+		RepoName:     repo.Name,
 		RefName:      refName,
 		IsPrivate:    repo.IsPrivate,
 	}); err != nil {
@@ -506,7 +521,7 @@ func CommitRepoAction(
 	}
 	payloadSender := &api.PayloadUser{
 		UserName:  pusher.Name,
-		ID:        pusher.Id,
+		ID:        pusher.ID,
 		AvatarUrl: pusher.AvatarLink(),
 	}
 
@@ -517,7 +532,7 @@ func CommitRepoAction(
 			Before:     oldCommitID,
 			After:      newCommitID,
 			CompareUrl: setting.AppUrl + commit.CompareUrl,
-			Commits:    commit.ToApiPayloadCommits(repo.FullRepoLink()),
+			Commits:    commit.ToApiPayloadCommits(repo.FullLink()),
 			Repo:       payloadRepo,
 			Pusher: &api.PayloadAuthor{
 				Name:     pusher_name,
@@ -553,7 +568,7 @@ func CommitRepoAction(
 
 func transferRepoAction(e Engine, actUser, oldOwner, newOwner *User, repo *Repository) (err error) {
 	if err = notifyWatchers(e, &Action{
-		ActUserID:    actUser.Id,
+		ActUserID:    actUser.ID,
 		ActUserName:  actUser.Name,
 		ActEmail:     actUser.Email,
 		OpType:       ACTION_TRANSFER_REPO,
@@ -561,14 +576,14 @@ func transferRepoAction(e Engine, actUser, oldOwner, newOwner *User, repo *Repos
 		RepoUserName: newOwner.Name,
 		RepoName:     repo.Name,
 		IsPrivate:    repo.IsPrivate,
-		Content:      path.Join(oldOwner.LowerName, repo.LowerName),
+		Content:      path.Join(oldOwner.Name, repo.Name),
 	}); err != nil {
-		return fmt.Errorf("notify watchers '%d/%d': %v", actUser.Id, repo.ID, err)
+		return fmt.Errorf("notify watchers '%d/%d': %v", actUser.ID, repo.ID, err)
 	}
 
 	// Remove watch for organization.
 	if repo.Owner.IsOrganization() {
-		if err = watchRepo(e, repo.Owner.Id, repo.ID, false); err != nil {
+		if err = watchRepo(e, repo.Owner.ID, repo.ID, false); err != nil {
 			return fmt.Errorf("watch repository: %v", err)
 		}
 	}
@@ -584,7 +599,7 @@ func TransferRepoAction(actUser, oldOwner, newOwner *User, repo *Repository) err
 
 func mergePullRequestAction(e Engine, actUser *User, repo *Repository, pull *Issue) error {
 	return notifyWatchers(e, &Action{
-		ActUserID:    actUser.Id,
+		ActUserID:    actUser.ID,
 		ActUserName:  actUser.Name,
 		ActEmail:     actUser.Email,
 		OpType:       ACTION_MERGE_PULL_REQUEST,
@@ -602,21 +617,22 @@ func MergePullRequestAction(actUser *User, repo *Repository, pull *Issue) error 
 }
 
 // GetFeeds returns action list of given user in given context.
-// userID is the user who's requesting, ctxUserID is the user/org that is requested.
-// userID can be -1, if isProfile is true or in order to skip the permission check.
-func GetFeeds(ctxUserID, userID, offset int64, isProfile bool) ([]*Action, error) {
+// actorID is the user who's requesting, ctxUserID is the user/org that is requested.
+// actorID can be -1 when isProfile is true or to skip the permission check.
+func GetFeeds(ctxUser *User, actorID, offset int64, isProfile bool) ([]*Action, error) {
 	actions := make([]*Action, 0, 20)
-	sess := x.Limit(20, int(offset)).Desc("id").Where("user_id=?", ctxUserID)
+	sess := x.Limit(20, int(offset)).Desc("id").Where("user_id = ?", ctxUser.ID)
 	if isProfile {
-		sess.And("is_private=?", false).And("act_user_id=?", ctxUserID)
-	} else if ctxUserID != -1 {
-		ctxUser := &User{Id: ctxUserID}
-		if err := ctxUser.GetUserRepositories(userID); err != nil {
-			return nil, err
+		sess.And("is_private = ?", false).And("act_user_id = ?", ctxUser.ID)
+	} else if actorID != -1 && ctxUser.IsOrganization() {
+		// FIXME: only need to get IDs here, not all fields of repository.
+		repos, _, err := ctxUser.GetUserRepositories(actorID, 1, ctxUser.NumRepos)
+		if err != nil {
+			return nil, fmt.Errorf("GetUserRepositories: %v", err)
 		}
 
 		var repoIDs []int64
-		for _, repo := range ctxUser.Repos {
+		for _, repo := range repos {
 			repoIDs = append(repoIDs, repo.ID)
 		}
 

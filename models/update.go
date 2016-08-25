@@ -56,10 +56,14 @@ func ListToPushCommits(l *list.List) *PushCommits {
 			actEmail = commit.Committer.Email
 		}
 		commits = append(commits,
-			&PushCommit{commit.ID.String(),
-				commit.Message(),
-				commit.Author.Email,
-				commit.Author.Name,
+			&PushCommit{
+				Sha1:           commit.ID.String(),
+				Message:        commit.Message(),
+				AuthorEmail:    commit.Author.Email,
+				AuthorName:     commit.Author.Name,
+				CommitterEmail: commit.Committer.Email,
+				CommitterName:  commit.Committer.Name,
+				Timestamp:      commit.Author.When,
 			})
 	}
 	return &PushCommits{l.Len(), commits, "", nil}
@@ -108,7 +112,7 @@ func PushUpdate(opts PushUpdateOptions) (err error) {
 		return fmt.Errorf("GetUserByName: %v", err)
 	}
 
-	repo, err := GetRepositoryByName(repoUser.Id, opts.RepoName)
+	repo, err := GetRepositoryByName(repoUser.ID, opts.RepoName)
 	if err != nil {
 		return fmt.Errorf("GetRepositoryByName: %v", err)
 	}
@@ -133,7 +137,7 @@ func PushUpdate(opts PushUpdateOptions) (err error) {
 		}
 
 		commit := &PushCommits{}
-		if err = CommitRepoAction(opts.PusherID, repoUser.Id, opts.PusherName, actEmail,
+		if err = CommitRepoAction(opts.PusherID, repoUser.ID, opts.PusherName, actEmail,
 			repo.ID, opts.RepoUserName, opts.RepoName, opts.RefName, commit, opts.OldCommitID, opts.NewCommitID); err != nil {
 			return fmt.Errorf("CommitRepoAction (tag): %v", err)
 		}
@@ -159,7 +163,7 @@ func PushUpdate(opts PushUpdateOptions) (err error) {
 		}
 	}
 
-	if err = CommitRepoAction(opts.PusherID, repoUser.Id, opts.PusherName, repoUser.Email,
+	if err = CommitRepoAction(opts.PusherID, repoUser.ID, opts.PusherName, repoUser.Email,
 		repo.ID, opts.RepoUserName, opts.RepoName, opts.RefName, ListToPushCommits(l),
 		opts.OldCommitID, opts.NewCommitID); err != nil {
 		return fmt.Errorf("CommitRepoAction (branch): %v", err)

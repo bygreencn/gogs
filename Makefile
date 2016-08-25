@@ -11,19 +11,25 @@ BUILD_FLAGS = "-v"
 RELEASE_ROOT = "release"
 RELEASE_GOGS = "release/gogs"
 NOW = $(shell date -u '+%Y%m%d%I%M%S')
+GOVET = go tool vet -composites=false -methods=false -structtags=false
 
 .PHONY: build pack release bindata clean
 
 .IGNORE: public/css/gogs.css
 
+govet:
+	$(GOVET) gogs.go 
+	$(GOVET) models modules routers
+
 build: $(GENERATED)
 	go install $(BUILD_FLAGS) -ldflags '$(LDFLAGS)' -tags '$(TAGS)'
 	cp '$(GOPATH)/bin/gogs' .
 
-govet:
-	go tool vet -composites=false -methods=false -structtags=false .
-
 build-dev: $(GENERATED) govet
+	go install $(BUILD_FLAGS) -tags '$(TAGS)'
+	cp '$(GOPATH)/bin/gogs' .
+
+build-dev-race: $(GENERATED) govet
 	go install $(BUILD_FLAGS) -race -tags '$(TAGS)'
 	cp '$(GOPATH)/bin/gogs' .
 

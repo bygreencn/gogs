@@ -78,21 +78,24 @@ func checkVersion() {
 
 	// Check dependency version.
 	checkers := []VerChecker{
-		{"github.com/go-xorm/xorm", func() string { return xorm.Version }, "0.5.2.0304"},
-		{"github.com/go-macaron/binding", binding.Version, "0.2.1"},
+		{"github.com/go-xorm/xorm", func() string { return xorm.Version }, "0.5.5"},
+		{"github.com/go-macaron/binding", binding.Version, "0.3.2"},
 		{"github.com/go-macaron/cache", cache.Version, "0.1.2"},
 		{"github.com/go-macaron/csrf", csrf.Version, "0.1.0"},
-		{"github.com/go-macaron/i18n", i18n.Version, "0.2.0"},
+		{"github.com/go-macaron/i18n", i18n.Version, "0.3.0"},
 		{"github.com/go-macaron/session", session.Version, "0.1.6"},
 		{"github.com/go-macaron/toolbox", toolbox.Version, "0.1.0"},
 		{"gopkg.in/ini.v1", ini.Version, "1.8.4"},
-		{"gopkg.in/macaron.v1", macaron.Version, "1.1.2"},
-		{"github.com/gogits/git-module", git.Version, "0.2.9"},
-		{"github.com/gogits/go-gogs-client", gogs.Version, "0.7.4"},
+		{"gopkg.in/macaron.v1", macaron.Version, "1.1.7"},
+		{"github.com/gogits/git-module", git.Version, "0.3.4"},
+		{"github.com/gogits/go-gogs-client", gogs.Version, "0.10.3"},
 	}
 	for _, c := range checkers {
 		if !version.Compare(c.Version(), c.Expected, ">=") {
-			log.Fatal(4, "Package '%s' version is too old (%s -> %s), did you forget to update?", c.ImportPath, c.Version(), c.Expected)
+			log.Fatal(4, `Dependency outdated!
+Package '%s' current version (%s) is below requirement (%s), 
+please use following command to update this package and recompile Gogs:
+go get -u %[1]s`, c.ImportPath, c.Version(), c.Expected)
 		}
 	}
 }
@@ -123,12 +126,16 @@ func newMacaron() *macaron.Macaron {
 			SkipLogging: setting.DisableRouterLog,
 		},
 	))
+
+	funcMap := template.NewFuncMap()
 	m.Use(macaron.Renderer(macaron.RenderOptions{
 		Directory:         path.Join(setting.StaticRootPath, "templates"),
 		AppendDirectories: []string{path.Join(setting.CustomPath, "templates")},
-		Funcs:             template.NewFuncMap(),
+		Funcs:             funcMap,
 		IndentJSON:        macaron.Env != macaron.PROD,
 	}))
+	models.InitMailRender(path.Join(setting.StaticRootPath, "templates/mail"),
+		path.Join(setting.CustomPath, "templates/mail"), funcMap)
 
 	localeNames, err := bindata.AssetDir("conf/locale")
 	if err != nil {
@@ -175,7 +182,7 @@ func newMacaron() *macaron.Macaron {
 	return m
 }
 
-func runWeb(ctx *cli.Context) {
+func runWeb(ctx *cli.Context) error {
 	if ctx.IsSet("config") {
 		setting.CustomConf = ctx.String("config")
 	}
@@ -219,7 +226,8 @@ func runWeb(ctx *cli.Context) {
 	m.Group("/user/settings", func() {
 		m.Get("", user.Settings)
 		m.Post("", bindIgnErr(auth.UpdateProfileForm{}), user.SettingsPost)
-		m.Post("/avatar", binding.MultipartForm(auth.UploadAvatarForm{}), user.SettingsAvatar)
+		m.Combo("/avatar").Get(user.SettingsAvatar).
+			Post(binding.MultipartForm(auth.AvatarForm{}), user.SettingsAvatarPost)
 		m.Post("/avatar/delete", user.SettingsDeleteAvatar)
 		m.Combo("/email").Get(user.SettingsEmails).
 			Post(bindIgnErr(auth.AddEmailForm{}), user.SettingsEmailPost)
@@ -368,7 +376,7 @@ func runWeb(ctx *cli.Context) {
 			m.Group("/settings", func() {
 				m.Combo("").Get(org.Settings).
 					Post(bindIgnErr(auth.UpdateOrgSettingForm{}), org.SettingsPost)
-				m.Post("/avatar", binding.MultipartForm(auth.UploadAvatarForm{}), org.SettingsAvatar)
+				m.Post("/avatar", binding.MultipartForm(auth.AvatarForm{}), org.SettingsAvatar)
 				m.Post("/avatar/delete", org.SettingsDeleteAvatar)
 
 				m.Group("/hooks", func() {
@@ -441,15 +449,17 @@ func runWeb(ctx *cli.Context) {
 
 	m.Get("/:username/:reponame/action/:action", reqSignIn, context.RepoAssignment(), repo.Action)
 	m.Group("/:username/:reponame", func() {
+		// FIXME: should use different URLs but mostly same logic for comments of issue and pull reuqest.
+		// So they can apply their own enable/disable logic on routers.
 		m.Group("/issues", func() {
 			m.Combo("/new", repo.MustEnableIssues).Get(context.RepoRef(), repo.NewIssue).
 				Post(bindIgnErr(auth.CreateIssueForm{}), repo.NewIssuePost)
 
-			m.Combo("/:index/comments").Post(bindIgnErr(auth.CreateCommentForm{}), repo.NewComment)
 			m.Group("/:index", func() {
 				m.Post("/label", repo.UpdateIssueLabel)
 				m.Post("/milestone", repo.UpdateIssueMilestone)
 				m.Post("/assignee", repo.UpdateIssueAssignee)
+				m.Combo("/comments").Post(bindIgnErr(auth.CreateCommentForm{}), repo.NewComment)
 			}, reqRepoWriter)
 
 			m.Group("/:index", func() {
@@ -457,12 +467,15 @@ func runWeb(ctx *cli.Context) {
 				m.Post("/content", repo.UpdateIssueContent)
 			})
 		})
-		m.Post("/comments/:id", repo.UpdateCommentContent)
+		m.Group("/comments/:id", func() {
+			m.Post("", repo.UpdateCommentContent)
+			m.Post("/delete", repo.DeleteComment)
+		})
 		m.Group("/labels", func() {
 			m.Post("/new", bindIgnErr(auth.CreateLabelForm{}), repo.NewLabel)
 			m.Post("/edit", bindIgnErr(auth.CreateLabelForm{}), repo.UpdateLabel)
 			m.Post("/delete", repo.DeleteLabel)
-		}, reqRepoWriter, context.RepoRef())
+		}, repo.MustEnableIssues, reqRepoWriter, context.RepoRef())
 		m.Group("/milestones", func() {
 			m.Combo("/new").Get(repo.NewMilestone).
 				Post(bindIgnErr(auth.CreateMilestoneForm{}), repo.NewMilestonePost)
@@ -470,7 +483,7 @@ func runWeb(ctx *cli.Context) {
 			m.Post("/:id/edit", bindIgnErr(auth.CreateMilestoneForm{}), repo.EditMilestonePost)
 			m.Get("/:id/:action", repo.ChangeMilestonStatus)
 			m.Post("/delete", repo.DeleteMilestone)
-		}, reqRepoWriter, context.RepoRef())
+		}, repo.MustEnableIssues, reqRepoWriter, context.RepoRef())
 
 		m.Group("/releases", func() {
 			m.Get("/new", repo.NewRelease)
@@ -585,4 +598,6 @@ func runWeb(ctx *cli.Context) {
 	if err != nil {
 		log.Fatal(4, "Fail to start server: %v", err)
 	}
+
+	return nil
 }

@@ -157,7 +157,8 @@ func Diff(ctx *context.Context) {
 	}
 
 	diff, err := models.GetDiffCommit(models.RepoPath(userName, repoName),
-		commitID, setting.Git.MaxGitDiffLines)
+		commitID, setting.Git.MaxGitDiffLines,
+		setting.Git.MaxGitDiffLineCharacters, setting.Git.MaxGitDiffFiles)
 	if err != nil {
 		ctx.Handle(404, "GetDiffCommit", err)
 		return
@@ -194,7 +195,15 @@ func Diff(ctx *context.Context) {
 }
 
 func RawDiff(ctx *context.Context) {
-	panic("not implemented")
+	if err := models.GetRawDiff(
+		models.RepoPath(ctx.Repo.Owner.Name, ctx.Repo.Repository.Name),
+		ctx.Params(":sha"),
+		models.RawDiffType(ctx.Params(":ext")),
+		ctx.Resp,
+	); err != nil {
+		ctx.Handle(500, "GetRawDiff", err)
+		return
+	}
 }
 
 func CompareDiff(ctx *context.Context) {
@@ -212,7 +221,8 @@ func CompareDiff(ctx *context.Context) {
 	}
 
 	diff, err := models.GetDiffRange(models.RepoPath(userName, repoName), beforeCommitID,
-		afterCommitID, setting.Git.MaxGitDiffLines)
+		afterCommitID, setting.Git.MaxGitDiffLines,
+		setting.Git.MaxGitDiffLineCharacters, setting.Git.MaxGitDiffFiles)
 	if err != nil {
 		ctx.Handle(404, "GetDiffRange", err)
 		return
