@@ -77,7 +77,7 @@ func Releases(ctx *context.Context) {
 				r.Publisher, err = models.GetUserByID(r.PublisherID)
 				if err != nil {
 					if models.IsErrUserNotExist(err) {
-						r.Publisher = models.NewFakeUser()
+						r.Publisher = models.NewGhostUser()
 					} else {
 						ctx.Handle(500, "GetUserByID", err)
 						return
@@ -126,7 +126,7 @@ func Releases(ctx *context.Context) {
 		r.Publisher, err = models.GetUserByID(r.PublisherID)
 		if err != nil {
 			if models.IsErrUserNotExist(err) {
-				r.Publisher = models.NewFakeUser()
+				r.Publisher = models.NewGhostUser()
 			} else {
 				ctx.Handle(500, "GetUserByID", err)
 				return
@@ -224,7 +224,7 @@ func EditRelease(ctx *context.Context) {
 	ctx.Data["PageIsReleaseList"] = true
 	ctx.Data["PageIsEditRelease"] = true
 
-	tagName := ctx.Params(":tagname")
+	tagName := ctx.Params("*")
 	rel, err := models.GetRelease(ctx.Repo.Repository.ID, tagName)
 	if err != nil {
 		if models.IsErrReleaseNotExist(err) {
@@ -249,7 +249,7 @@ func EditReleasePost(ctx *context.Context, form auth.EditReleaseForm) {
 	ctx.Data["PageIsReleaseList"] = true
 	ctx.Data["PageIsEditRelease"] = true
 
-	tagName := ctx.Params(":tagname")
+	tagName := ctx.Params("*")
 	rel, err := models.GetRelease(ctx.Repo.Repository.ID, tagName)
 	if err != nil {
 		if models.IsErrReleaseNotExist(err) {

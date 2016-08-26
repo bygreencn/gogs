@@ -16,6 +16,7 @@ import (
 
 	"github.com/Unknwon/com"
 	"github.com/go-xorm/xorm"
+	api "github.com/gogits/go-gogs-client"
 	gouuid "github.com/satori/go.uuid"
 
 	"github.com/gogits/gogs/modules/base"
@@ -24,32 +25,30 @@ import (
 )
 
 var (
-	ErrWrongIssueCounter   = errors.New("Invalid number of issues for this milestone")
-	ErrAttachmentNotLinked = errors.New("Attachment does not belong to this issue")
-	ErrMissingIssueNumber  = errors.New("No issue number specified")
+	ErrMissingIssueNumber = errors.New("No issue number specified")
 )
 
 // Issue represents an issue or pull request of repository.
 type Issue struct {
-	ID              int64 `xorm:"pk autoincr"`
-	RepoID          int64 `xorm:"INDEX UNIQUE(repo_index)"`
-	Index           int64 `xorm:"UNIQUE(repo_index)"` // Index in one repository.
-	Name            string
+	ID              int64       `xorm:"pk autoincr"`
+	RepoID          int64       `xorm:"INDEX UNIQUE(repo_index)"`
 	Repo            *Repository `xorm:"-"`
+	Index           int64       `xorm:"UNIQUE(repo_index)"` // Index in one repository.
 	PosterID        int64
 	Poster          *User    `xorm:"-"`
+	Title           string   `xorm:"name"`
+	Content         string   `xorm:"TEXT"`
+	RenderedContent string   `xorm:"-"`
 	Labels          []*Label `xorm:"-"`
 	MilestoneID     int64
 	Milestone       *Milestone `xorm:"-"`
+	Priority        int
 	AssigneeID      int64
 	Assignee        *User `xorm:"-"`
-	IsRead          bool  `xorm:"-"`
-	IsPull          bool  // Indicates whether is a pull request or not.
-	*PullRequest    `xorm:"-"`
 	IsClosed        bool
-	Content         string `xorm:"TEXT"`
-	RenderedContent string `xorm:"-"`
-	Priority        int
+	IsRead          bool         `xorm:"-"`
+	IsPull          bool         // Indicates whether is a pull request or not.
+	PullRequest     *PullRequest `xorm:"-"`
 	NumComments     int
 
 	Deadline     time.Time `xorm:"-"`
@@ -63,20 +62,90 @@ type Issue struct {
 	Comments    []*Comment    `xorm:"-"`
 }
 
-func (i *Issue) BeforeInsert() {
-	i.CreatedUnix = time.Now().Unix()
-	i.UpdatedUnix = i.CreatedUnix
+func (issue *Issue) BeforeInsert() {
+	issue.CreatedUnix = time.Now().Unix()
+	issue.UpdatedUnix = issue.CreatedUnix
 }
 
-func (i *Issue) BeforeUpdate() {
-	i.UpdatedUnix = time.Now().Unix()
-	i.DeadlineUnix = i.Deadline.Unix()
+func (issue *Issue) BeforeUpdate() {
+	issue.UpdatedUnix = time.Now().Unix()
+	issue.DeadlineUnix = issue.Deadline.Unix()
+}
+
+func (issue *Issue) AfterSet(colName string, _ xorm.Cell) {
+	var err error
+	switch colName {
+	case "id":
+		issue.Attachments, err = GetAttachmentsByIssueID(issue.ID)
+		if err != nil {
+			log.Error(3, "GetAttachmentsByIssueID[%d]: %v", issue.ID, err)
+		}
+
+		issue.Comments, err = GetCommentsByIssueID(issue.ID)
+		if err != nil {
+			log.Error(3, "GetCommentsByIssueID[%d]: %v", issue.ID, err)
+		}
+
+		issue.Labels, err = GetLabelsByIssueID(issue.ID)
+		if err != nil {
+			log.Error(3, "GetLabelsByIssueID[%d]: %v", issue.ID, err)
+		}
+
+	case "poster_id":
+		issue.Poster, err = GetUserByID(issue.PosterID)
+		if err != nil {
+			if IsErrUserNotExist(err) {
+				issue.PosterID = -1
+				issue.Poster = NewGhostUser()
+			} else {
+				log.Error(3, "GetUserByID[%d]: %v", issue.ID, err)
+			}
+			return
+		}
+
+	case "milestone_id":
+		if issue.MilestoneID == 0 {
+			return
+		}
+
+		issue.Milestone, err = GetMilestoneByRepoID(issue.RepoID, issue.MilestoneID)
+		if err != nil {
+			log.Error(3, "GetMilestoneById[%d]: %v", issue.ID, err)
+		}
+
+	case "assignee_id":
+		if issue.AssigneeID == 0 {
+			return
+		}
+
+		issue.Assignee, err = GetUserByID(issue.AssigneeID)
+		if err != nil {
+			log.Error(3, "GetUserByID[%d]: %v", issue.ID, err)
+		}
+
+	case "deadline_unix":
+		issue.Deadline = time.Unix(issue.DeadlineUnix, 0).Local()
+	case "created_unix":
+		issue.Created = time.Unix(issue.CreatedUnix, 0).Local()
+	case "updated_unix":
+		issue.Updated = time.Unix(issue.UpdatedUnix, 0).Local()
+	}
 }
 
 func (issue *Issue) loadAttributes(e Engine) (err error) {
-	issue.Repo, err = getRepositoryByID(e, issue.RepoID)
-	if err != nil {
-		return fmt.Errorf("getRepositoryByID: %v", err)
+	if issue.Repo == nil {
+		issue.Repo, err = getRepositoryByID(e, issue.RepoID)
+		if err != nil {
+			return fmt.Errorf("getRepositoryByID [%d]: %v", issue.RepoID, err)
+		}
+	}
+
+	if issue.IsPull && issue.PullRequest == nil {
+		// It is possible pull request is not yet created.
+		issue.PullRequest, err = getPullRequestByIssueID(e, issue.ID)
+		if err != nil && !IsErrPullRequestNotExist(err) {
+			return fmt.Errorf("getPullRequestByIssueID [%d]: %v", issue.ID, err)
+		}
 	}
 
 	return nil
@@ -86,87 +155,67 @@ func (issue *Issue) LoadAttributes() error {
 	return issue.loadAttributes(x)
 }
 
-func (i *Issue) AfterSet(colName string, _ xorm.Cell) {
-	var err error
-	switch colName {
-	case "id":
-		i.Attachments, err = GetAttachmentsByIssueID(i.ID)
-		if err != nil {
-			log.Error(3, "GetAttachmentsByIssueID[%d]: %v", i.ID, err)
-		}
-
-		i.Comments, err = GetCommentsByIssueID(i.ID)
-		if err != nil {
-			log.Error(3, "GetCommentsByIssueID[%d]: %v", i.ID, err)
-		}
-
-		i.Labels, err = GetLabelsByIssueID(i.ID)
-		if err != nil {
-			log.Error(3, "GetLabelsByIssueID[%d]: %v", i.ID, err)
-		}
-
-	case "poster_id":
-		i.Poster, err = GetUserByID(i.PosterID)
-		if err != nil {
-			if IsErrUserNotExist(err) {
-				i.PosterID = -1
-				i.Poster = NewFakeUser()
-			} else {
-				log.Error(3, "GetUserByID[%d]: %v", i.ID, err)
-			}
-			return
-		}
-
-	case "milestone_id":
-		if i.MilestoneID == 0 {
-			return
-		}
-
-		i.Milestone, err = GetMilestoneByID(i.MilestoneID)
-		if err != nil {
-			log.Error(3, "GetMilestoneById[%d]: %v", i.ID, err)
-		}
-
-	case "assignee_id":
-		if i.AssigneeID == 0 {
-			return
-		}
-
-		i.Assignee, err = GetUserByID(i.AssigneeID)
-		if err != nil {
-			log.Error(3, "GetUserByID[%d]: %v", i.ID, err)
-		}
-
-	case "deadline_unix":
-		i.Deadline = time.Unix(i.DeadlineUnix, 0).Local()
-	case "created_unix":
-		i.Created = time.Unix(i.CreatedUnix, 0).Local()
-	case "updated_unix":
-		i.Updated = time.Unix(i.UpdatedUnix, 0).Local()
-	}
-}
-
-// HashTag returns unique hash tag for issue.
-func (i *Issue) HashTag() string {
-	return "issue-" + com.ToStr(i.ID)
-}
-
-// State returns string representation of issue status.
-func (i *Issue) State() string {
-	if i.IsClosed {
-		return "closed"
-	}
-	return "open"
-}
-
-func (issue *Issue) FullLink() string {
+func (issue *Issue) HTMLURL() string {
 	var path string
 	if issue.IsPull {
 		path = "pulls"
 	} else {
 		path = "issues"
 	}
-	return fmt.Sprintf("%s/%s/%d", issue.Repo.FullLink(), path, issue.Index)
+	return fmt.Sprintf("%s/%s/%d", issue.Repo.HTMLURL(), path, issue.Index)
+}
+
+// State returns string representation of issue status.
+func (i *Issue) State() api.StateType {
+	if i.IsClosed {
+		return api.STATE_CLOSED
+	}
+	return api.STATE_OPEN
+}
+
+// This method assumes some fields assigned with values:
+// Required - Poster, Labels,
+// Optional - Milestone, Assignee, PullRequest
+func (issue *Issue) APIFormat() *api.Issue {
+	apiLabels := make([]*api.Label, len(issue.Labels))
+	for i := range issue.Labels {
+		apiLabels[i] = issue.Labels[i].APIFormat()
+	}
+
+	apiIssue := &api.Issue{
+		ID:       issue.ID,
+		Index:    issue.Index,
+		Poster:   issue.Poster.APIFormat(),
+		Title:    issue.Title,
+		Body:     issue.Content,
+		Labels:   apiLabels,
+		State:    issue.State(),
+		Comments: issue.NumComments,
+		Created:  issue.Created,
+		Updated:  issue.Updated,
+	}
+
+	if issue.Milestone != nil {
+		apiIssue.Milestone = issue.Milestone.APIFormat()
+	}
+	if issue.Assignee != nil {
+		apiIssue.Assignee = issue.Assignee.APIFormat()
+	}
+	if issue.IsPull {
+		apiIssue.PullRequest = &api.PullRequestMeta{
+			HasMerged: issue.PullRequest.HasMerged,
+		}
+		if issue.PullRequest.HasMerged {
+			apiIssue.PullRequest.Merged = &issue.PullRequest.Merged
+		}
+	}
+
+	return apiIssue
+}
+
+// HashTag returns unique hash tag for issue.
+func (i *Issue) HashTag() string {
+	return "issue-" + com.ToStr(i.ID)
 }
 
 // IsPoster returns true if given user by ID is the poster.
@@ -183,23 +232,41 @@ func (i *Issue) HasLabel(labelID int64) bool {
 	return i.hasLabel(x, labelID)
 }
 
+func (issue *Issue) sendLabelUpdatedWebhook(doer *User) {
+	var err error
+	if issue.IsPull {
+		err = issue.PullRequest.LoadIssue()
+		if err != nil {
+			log.Error(4, "LoadIssue: %v", err)
+			return
+		}
+		err = PrepareWebhooks(issue.Repo, HOOK_EVENT_PULL_REQUEST, &api.PullRequestPayload{
+			Action:      api.HOOK_ISSUE_LABEL_UPDATED,
+			Index:       issue.Index,
+			PullRequest: issue.PullRequest.APIFormat(),
+			Repository:  issue.Repo.APIFormat(nil),
+			Sender:      doer.APIFormat(),
+		})
+	}
+	if err != nil {
+		log.Error(4, "PrepareWebhooks [is_pull: %v]: %v", issue.IsPull, err)
+	} else {
+		go HookQueue.Add(issue.RepoID)
+	}
+}
+
 func (i *Issue) addLabel(e *xorm.Session, label *Label) error {
 	return newIssueLabel(e, i, label)
 }
 
 // AddLabel adds a new label to the issue.
-func (i *Issue) AddLabel(label *Label) (err error) {
-	sess := x.NewSession()
-	defer sessionRelease(sess)
-	if err = sess.Begin(); err != nil {
+func (issue *Issue) AddLabel(doer *User, label *Label) error {
+	if err := NewIssueLabel(issue, label); err != nil {
 		return err
 	}
 
-	if err = i.addLabel(sess, label); err != nil {
-		return err
-	}
-
-	return sess.Commit()
+	issue.sendLabelUpdatedWebhook(doer)
+	return nil
 }
 
 func (issue *Issue) addLabels(e *xorm.Session, labels []*Label) error {
@@ -207,8 +274,13 @@ func (issue *Issue) addLabels(e *xorm.Session, labels []*Label) error {
 }
 
 // AddLabels adds a list of new labels to the issue.
-func (issue *Issue) AddLabels(labels []*Label) error {
-	return NewIssueLabels(issue, labels)
+func (issue *Issue) AddLabels(doer *User, labels []*Label) error {
+	if err := NewIssueLabels(issue, labels); err != nil {
+		return err
+	}
+
+	issue.sendLabelUpdatedWebhook(doer)
+	return nil
 }
 
 func (issue *Issue) getLabels(e Engine) (err error) {
@@ -228,8 +300,13 @@ func (issue *Issue) removeLabel(e *xorm.Session, label *Label) error {
 }
 
 // RemoveLabel removes a label from issue by given ID.
-func (issue *Issue) RemoveLabel(label *Label) (err error) {
-	return DeleteIssueLabel(issue, label)
+func (issue *Issue) RemoveLabel(doer *User, label *Label) error {
+	if err := DeleteIssueLabel(issue, label); err != nil {
+		return err
+	}
+
+	issue.sendLabelUpdatedWebhook(doer)
+	return nil
 }
 
 func (issue *Issue) clearLabels(e *xorm.Session) (err error) {
@@ -246,7 +323,7 @@ func (issue *Issue) clearLabels(e *xorm.Session) (err error) {
 	return nil
 }
 
-func (issue *Issue) ClearLabels() (err error) {
+func (issue *Issue) ClearLabels(doer *User) (err error) {
 	sess := x.NewSession()
 	defer sessionRelease(sess)
 	if err = sess.Begin(); err != nil {
@@ -257,7 +334,31 @@ func (issue *Issue) ClearLabels() (err error) {
 		return err
 	}
 
-	return sess.Commit()
+	if err = sess.Commit(); err != nil {
+		return fmt.Errorf("Commit: %v", err)
+	}
+
+	if issue.IsPull {
+		err = issue.PullRequest.LoadIssue()
+		if err != nil {
+			log.Error(4, "LoadIssue: %v", err)
+			return
+		}
+		err = PrepareWebhooks(issue.Repo, HOOK_EVENT_PULL_REQUEST, &api.PullRequestPayload{
+			Action:      api.HOOK_ISSUE_LABEL_CLEARED,
+			Index:       issue.Index,
+			PullRequest: issue.PullRequest.APIFormat(),
+			Repository:  issue.Repo.APIFormat(nil),
+			Sender:      doer.APIFormat(),
+		})
+	}
+	if err != nil {
+		log.Error(4, "PrepareWebhooks [is_pull: %v]: %v", issue.IsPull, err)
+	} else {
+		go HookQueue.Add(issue.RepoID)
+	}
+
+	return nil
 }
 
 // ReplaceLabels removes all current labels and add new labels to the issue.
@@ -292,6 +393,16 @@ func (i *Issue) GetAssignee() (err error) {
 // ReadBy sets issue to be read by given user.
 func (i *Issue) ReadBy(uid int64) error {
 	return UpdateIssueUserByRead(uid, i.ID)
+}
+
+func updateIssueCols(e Engine, issue *Issue, cols ...string) error {
+	_, err := e.Id(issue.ID).Cols(cols...).Update(issue)
+	return err
+}
+
+// UpdateIssueCols only updates values of specific columns for given issue.
+func UpdateIssueCols(issue *Issue, cols ...string) error {
+	return updateIssueCols(x, issue, cols...)
 }
 
 func (i *Issue) changeStatus(e *xorm.Session, doer *User, repo *Repository, isClosed bool) (err error) {
@@ -336,108 +447,248 @@ func (i *Issue) changeStatus(e *xorm.Session, doer *User, repo *Repository, isCl
 }
 
 // ChangeStatus changes issue status to open or closed.
-func (i *Issue) ChangeStatus(doer *User, repo *Repository, isClosed bool) (err error) {
+func (issue *Issue) ChangeStatus(doer *User, repo *Repository, isClosed bool) (err error) {
 	sess := x.NewSession()
 	defer sessionRelease(sess)
 	if err = sess.Begin(); err != nil {
 		return err
 	}
 
-	if err = i.changeStatus(sess, doer, repo, isClosed); err != nil {
+	if err = issue.changeStatus(sess, doer, repo, isClosed); err != nil {
 		return err
 	}
 
-	return sess.Commit()
+	if err = sess.Commit(); err != nil {
+		return fmt.Errorf("Commit: %v", err)
+	}
+
+	if issue.IsPull {
+		// Merge pull request calls issue.changeStatus so we need to handle separately.
+		issue.PullRequest.Issue = issue
+		apiPullRequest := &api.PullRequestPayload{
+			Index:       issue.Index,
+			PullRequest: issue.PullRequest.APIFormat(),
+			Repository:  repo.APIFormat(nil),
+			Sender:      doer.APIFormat(),
+		}
+		if isClosed {
+			apiPullRequest.Action = api.HOOK_ISSUE_CLOSED
+		} else {
+			apiPullRequest.Action = api.HOOK_ISSUE_REOPENED
+		}
+		err = PrepareWebhooks(repo, HOOK_EVENT_PULL_REQUEST, apiPullRequest)
+	}
+	if err != nil {
+		log.Error(4, "PrepareWebhooks [is_pull: %v, is_closed: %v]: %v", issue.IsPull, isClosed, err)
+	} else {
+		go HookQueue.Add(repo.ID)
+	}
+
+	return nil
 }
 
-func (i *Issue) GetPullRequest() (err error) {
-	if i.PullRequest != nil {
+func (issue *Issue) ChangeTitle(doer *User, title string) (err error) {
+	oldTitle := issue.Title
+	issue.Title = title
+	if err = UpdateIssueCols(issue, "name"); err != nil {
+		return fmt.Errorf("UpdateIssueCols: %v", err)
+	}
+
+	if issue.IsPull {
+		issue.PullRequest.Issue = issue
+		err = PrepareWebhooks(issue.Repo, HOOK_EVENT_PULL_REQUEST, &api.PullRequestPayload{
+			Action: api.HOOK_ISSUE_EDITED,
+			Index:  issue.Index,
+			Changes: &api.ChangesPayload{
+				Title: &api.ChangesFromPayload{
+					From: oldTitle,
+				},
+			},
+			PullRequest: issue.PullRequest.APIFormat(),
+			Repository:  issue.Repo.APIFormat(nil),
+			Sender:      doer.APIFormat(),
+		})
+	}
+	if err != nil {
+		log.Error(4, "PrepareWebhooks [is_pull: %v]: %v", issue.IsPull, err)
+	} else {
+		go HookQueue.Add(issue.RepoID)
+	}
+
+	return nil
+}
+
+func (issue *Issue) ChangeContent(doer *User, content string) (err error) {
+	oldContent := issue.Content
+	issue.Content = content
+	if err = UpdateIssueCols(issue, "content"); err != nil {
+		return fmt.Errorf("UpdateIssueCols: %v", err)
+	}
+
+	if issue.IsPull {
+		issue.PullRequest.Issue = issue
+		err = PrepareWebhooks(issue.Repo, HOOK_EVENT_PULL_REQUEST, &api.PullRequestPayload{
+			Action: api.HOOK_ISSUE_EDITED,
+			Index:  issue.Index,
+			Changes: &api.ChangesPayload{
+				Body: &api.ChangesFromPayload{
+					From: oldContent,
+				},
+			},
+			PullRequest: issue.PullRequest.APIFormat(),
+			Repository:  issue.Repo.APIFormat(nil),
+			Sender:      doer.APIFormat(),
+		})
+	}
+	if err != nil {
+		log.Error(4, "PrepareWebhooks [is_pull: %v]: %v", issue.IsPull, err)
+	} else {
+		go HookQueue.Add(issue.RepoID)
+	}
+
+	return nil
+}
+
+func (issue *Issue) ChangeAssignee(doer *User, assigneeID int64) (err error) {
+	issue.AssigneeID = assigneeID
+	if err = UpdateIssueUserByAssignee(issue); err != nil {
+		return fmt.Errorf("UpdateIssueUserByAssignee: %v", err)
+	}
+
+	issue.Assignee, err = GetUserByID(issue.AssigneeID)
+	if err != nil && !IsErrUserNotExist(err) {
+		log.Error(4, "GetUserByID [assignee_id: %v]: %v", issue.AssigneeID, err)
 		return nil
 	}
 
-	i.PullRequest, err = GetPullRequestByIssueID(i.ID)
-	return err
+	// Error not nil here means user does not exist, which is remove assignee.
+	isRemoveAssignee := err != nil
+	if issue.IsPull {
+		issue.PullRequest.Issue = issue
+		apiPullRequest := &api.PullRequestPayload{
+			Index:       issue.Index,
+			PullRequest: issue.PullRequest.APIFormat(),
+			Repository:  issue.Repo.APIFormat(nil),
+			Sender:      doer.APIFormat(),
+		}
+		if isRemoveAssignee {
+			apiPullRequest.Action = api.HOOK_ISSUE_UNASSIGNED
+		} else {
+			apiPullRequest.Action = api.HOOK_ISSUE_ASSIGNED
+		}
+		err = PrepareWebhooks(issue.Repo, HOOK_EVENT_PULL_REQUEST, apiPullRequest)
+	}
+	if err != nil {
+		log.Error(4, "PrepareWebhooks [is_pull: %v, remove_assignee: %v]: %v", issue.IsPull, isRemoveAssignee, err)
+	} else {
+		go HookQueue.Add(issue.RepoID)
+	}
+
+	return nil
 }
 
-// It's caller's responsibility to create action.
-func newIssue(e *xorm.Session, repo *Repository, issue *Issue, labelIDs []int64, uuids []string, isPull bool) (err error) {
-	issue.Name = strings.TrimSpace(issue.Name)
-	issue.Index = repo.NextIssueIndex()
+type NewIssueOptions struct {
+	Repo        *Repository
+	Issue       *Issue
+	LableIDs    []int64
+	Attachments []string // In UUID format.
+	IsPull      bool
+}
 
-	if issue.AssigneeID > 0 {
-		// Silently drop invalid assignee
-		valid, err := hasAccess(e, &User{ID: issue.AssigneeID}, repo, ACCESS_MODE_WRITE)
-		if err != nil {
-			return fmt.Errorf("hasAccess: %v", err)
-		} else if !valid {
-			issue.AssigneeID = 0
+func newIssue(e *xorm.Session, opts NewIssueOptions) (err error) {
+	opts.Issue.Title = strings.TrimSpace(opts.Issue.Title)
+	opts.Issue.Index = opts.Repo.NextIssueIndex()
+
+	if opts.Issue.MilestoneID > 0 {
+		milestone, err := getMilestoneByRepoID(e, opts.Issue.RepoID, opts.Issue.MilestoneID)
+		if err != nil && !IsErrMilestoneNotExist(err) {
+			return fmt.Errorf("getMilestoneByID: %v", err)
+		}
+
+		// Assume milestone is invalid and drop silently.
+		opts.Issue.MilestoneID = 0
+		if milestone != nil {
+			opts.Issue.MilestoneID = milestone.ID
+			opts.Issue.Milestone = milestone
+			if err = changeMilestoneAssign(e, opts.Issue, -1); err != nil {
+				return err
+			}
 		}
 	}
 
-	if _, err = e.Insert(issue); err != nil {
+	if opts.Issue.AssigneeID > 0 {
+		assignee, err := getUserByID(e, opts.Issue.AssigneeID)
+		if err != nil && !IsErrUserNotExist(err) {
+			return fmt.Errorf("getUserByID: %v", err)
+		}
+
+		// Assume assignee is invalid and drop silently.
+		opts.Issue.AssigneeID = 0
+		if assignee != nil {
+			valid, err := hasAccess(e, assignee, opts.Repo, ACCESS_MODE_WRITE)
+			if err != nil {
+				return fmt.Errorf("hasAccess [user_id: %d, repo_id: %d]: %v", assignee.ID, opts.Repo.ID, err)
+			}
+			if valid {
+				opts.Issue.AssigneeID = assignee.ID
+				opts.Issue.Assignee = assignee
+			}
+		}
+	}
+
+	// Milestone and assignee validation should happen before insert actual object.
+	if _, err = e.Insert(opts.Issue); err != nil {
 		return err
 	}
 
-	if isPull {
-		_, err = e.Exec("UPDATE `repository` SET num_pulls=num_pulls+1 WHERE id=?", issue.RepoID)
+	if opts.IsPull {
+		_, err = e.Exec("UPDATE `repository` SET num_pulls = num_pulls + 1 WHERE id = ?", opts.Issue.RepoID)
 	} else {
-		_, err = e.Exec("UPDATE `repository` SET num_issues=num_issues+1 WHERE id=?", issue.RepoID)
+		_, err = e.Exec("UPDATE `repository` SET num_issues = num_issues + 1 WHERE id = ?", opts.Issue.RepoID)
 	}
 	if err != nil {
 		return err
 	}
 
-	if len(labelIDs) > 0 {
+	if len(opts.LableIDs) > 0 {
 		// During the session, SQLite3 dirver cannot handle retrieve objects after update something.
 		// So we have to get all needed labels first.
-		labels := make([]*Label, 0, len(labelIDs))
-		if err = e.In("id", labelIDs).Find(&labels); err != nil {
-			return fmt.Errorf("find all labels: %v", err)
+		labels := make([]*Label, 0, len(opts.LableIDs))
+		if err = e.In("id", opts.LableIDs).Find(&labels); err != nil {
+			return fmt.Errorf("find all labels [label_ids: %v]: %v", opts.LableIDs, err)
 		}
 
 		for _, label := range labels {
-			if label.RepoID != repo.ID {
+			// Silently drop invalid labels.
+			if label.RepoID != opts.Repo.ID {
 				continue
 			}
 
-			if err = issue.addLabel(e, label); err != nil {
-				return fmt.Errorf("addLabel: %v", err)
+			if err = opts.Issue.addLabel(e, label); err != nil {
+				return fmt.Errorf("addLabel [id: %d]: %v", label.ID, err)
 			}
 		}
 	}
 
-	if issue.MilestoneID > 0 {
-		if err = changeMilestoneAssign(e, 0, issue); err != nil {
-			return err
-		}
-	}
-
-	if err = newIssueUsers(e, repo, issue); err != nil {
+	if err = newIssueUsers(e, opts.Repo, opts.Issue); err != nil {
 		return err
 	}
 
-	// Check attachments.
-	attachments := make([]*Attachment, 0, len(uuids))
-	for _, uuid := range uuids {
-		attach, err := getAttachmentByUUID(e, uuid)
+	if len(opts.Attachments) > 0 {
+		attachments, err := getAttachmentsByUUIDs(e, opts.Attachments)
 		if err != nil {
-			if IsErrAttachmentNotExist(err) {
-				continue
+			return fmt.Errorf("getAttachmentsByUUIDs [uuids: %v]: %v", opts.Attachments, err)
+		}
+
+		for i := 0; i < len(attachments); i++ {
+			attachments[i].IssueID = opts.Issue.ID
+			if _, err = e.Id(attachments[i].ID).Update(attachments[i]); err != nil {
+				return fmt.Errorf("update attachment [id: %d]: %v", attachments[i].ID, err)
 			}
-			return fmt.Errorf("getAttachmentByUUID[%s]: %v", uuid, err)
-		}
-		attachments = append(attachments, attach)
-	}
-
-	for i := range attachments {
-		attachments[i].IssueID = issue.ID
-		// No assign value could be 0, so ignore AllCols().
-		if _, err = e.Id(attachments[i].ID).Update(attachments[i]); err != nil {
-			return fmt.Errorf("update attachment[%d]: %v", attachments[i].ID, err)
 		}
 	}
 
-	return issue.loadAttributes(e)
+	return opts.Issue.loadAttributes(e)
 }
 
 // NewIssue creates new issue with labels for repository.
@@ -448,7 +699,12 @@ func NewIssue(repo *Repository, issue *Issue, labelIDs []int64, uuids []string) 
 		return err
 	}
 
-	if err = newIssue(sess, repo, issue, labelIDs, uuids, false); err != nil {
+	if err = newIssue(sess, NewIssueOptions{
+		Repo:        repo,
+		Issue:       issue,
+		LableIDs:    labelIDs,
+		Attachments: uuids,
+	}); err != nil {
 		return fmt.Errorf("newIssue: %v", err)
 	}
 
@@ -456,21 +712,19 @@ func NewIssue(repo *Repository, issue *Issue, labelIDs []int64, uuids []string) 
 		return fmt.Errorf("Commit: %v", err)
 	}
 
-	// Notify watchers.
-	act := &Action{
+	if err = NotifyWatchers(&Action{
 		ActUserID:    issue.Poster.ID,
 		ActUserName:  issue.Poster.Name,
-		ActEmail:     issue.Poster.Email,
 		OpType:       ACTION_CREATE_ISSUE,
-		Content:      fmt.Sprintf("%d|%s", issue.Index, issue.Name),
+		Content:      fmt.Sprintf("%d|%s", issue.Index, issue.Title),
 		RepoID:       repo.ID,
 		RepoUserName: repo.Owner.Name,
 		RepoName:     repo.Name,
 		IsPrivate:    repo.IsPrivate,
-	}
-	if err = NotifyWatchers(act); err != nil {
+	}); err != nil {
 		log.Error(4, "NotifyWatchers: %v", err)
-	} else if err = issue.MailParticipants(); err != nil {
+	}
+	if err = issue.MailParticipants(); err != nil {
 		log.Error(4, "MailParticipants: %v", err)
 	}
 
@@ -518,16 +772,20 @@ func GetIssueByIndex(repoID, index int64) (*Issue, error) {
 	return issue, issue.LoadAttributes()
 }
 
-// GetIssueByID returns an issue by given ID.
-func GetIssueByID(id int64) (*Issue, error) {
+func getIssueByID(e Engine, id int64) (*Issue, error) {
 	issue := new(Issue)
-	has, err := x.Id(id).Get(issue)
+	has, err := e.Id(id).Get(issue)
 	if err != nil {
 		return nil, err
 	} else if !has {
 		return nil, ErrIssueNotExist{id, 0, 0}
 	}
 	return issue, issue.LoadAttributes()
+}
+
+// GetIssueByID returns an issue by given ID.
+func GetIssueByID(id int64) (*Issue, error) {
+	return getIssueByID(x, id)
 }
 
 type IssuesOptions struct {
@@ -613,19 +871,6 @@ func Issues(opts *IssuesOptions) ([]*Issue, error) {
 	return issues, sess.Find(&issues)
 }
 
-type IssueStatus int
-
-const (
-	IS_OPEN = iota + 1
-	IS_CLOSE
-)
-
-// GetIssueCountByPoster returns number of issues of repository by poster.
-func GetIssueCountByPoster(uid, rid int64, isClosed bool) int64 {
-	count, _ := x.Where("repo_id=?", rid).And("poster_id=?", uid).And("is_closed=?", isClosed).Count(new(Issue))
-	return count
-}
-
 // .___                             ____ ___
 // |   | ______ ________ __   ____ |    |   \______ ___________
 // |   |/  ___//  ___/  |  \_/ __ \|    |   /  ___// __ \_  __ \
@@ -648,37 +893,41 @@ type IssueUser struct {
 }
 
 func newIssueUsers(e *xorm.Session, repo *Repository, issue *Issue) error {
-	users, err := repo.GetAssignees()
+	assignees, err := repo.getAssignees(e)
 	if err != nil {
+		return fmt.Errorf("getAssignees: %v", err)
+	}
+
+	// Poster can be anyone, append later if not one of assignees.
+	isPosterAssignee := false
+
+	// Leave a seat for poster itself to append later, but if poster is one of assignee
+	// and just waste 1 unit is cheaper than re-allocate memory once.
+	issueUsers := make([]*IssueUser, 0, len(assignees)+1)
+	for _, assignee := range assignees {
+		isPoster := assignee.ID == issue.PosterID
+		issueUsers = append(issueUsers, &IssueUser{
+			IssueID:    issue.ID,
+			RepoID:     repo.ID,
+			UID:        assignee.ID,
+			IsPoster:   isPoster,
+			IsAssigned: assignee.ID == issue.AssigneeID,
+		})
+		if !isPosterAssignee && isPoster {
+			isPosterAssignee = true
+		}
+	}
+	if !isPosterAssignee {
+		issueUsers = append(issueUsers, &IssueUser{
+			IssueID:  issue.ID,
+			RepoID:   repo.ID,
+			UID:      issue.PosterID,
+			IsPoster: true,
+		})
+	}
+
+	if _, err = e.Insert(issueUsers); err != nil {
 		return err
-	}
-
-	iu := &IssueUser{
-		IssueID: issue.ID,
-		RepoID:  repo.ID,
-	}
-
-	// Poster can be anyone.
-	isNeedAddPoster := true
-	for _, u := range users {
-		iu.ID = 0
-		iu.UID = u.ID
-		iu.IsPoster = iu.UID == issue.PosterID
-		if isNeedAddPoster && iu.IsPoster {
-			isNeedAddPoster = false
-		}
-		iu.IsAssigned = iu.UID == issue.AssigneeID
-		if _, err = e.Insert(iu); err != nil {
-			return err
-		}
-	}
-	if isNeedAddPoster {
-		iu.ID = 0
-		iu.UID = issue.PosterID
-		iu.IsPoster = true
-		if _, err = e.Insert(iu); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -970,12 +1219,6 @@ func UpdateIssue(issue *Issue) error {
 	return updateIssue(x, issue)
 }
 
-// updateIssueCols only updates values of specific columns for given issue.
-func updateIssueCols(e Engine, issue *Issue, cols ...string) error {
-	_, err := e.Id(issue.ID).Cols(cols...).Update(issue)
-	return err
-}
-
 func updateIssueUsersByStatus(e Engine, issueID int64, isClosed bool) error {
 	_, err := e.Exec("UPDATE `issue_user` SET is_closed=? WHERE issue_id=?", isClosed, issueID)
 	return err
@@ -987,13 +1230,13 @@ func UpdateIssueUsersByStatus(issueID int64, isClosed bool) error {
 }
 
 func updateIssueUserByAssignee(e *xorm.Session, issue *Issue) (err error) {
-	if _, err = e.Exec("UPDATE `issue_user` SET is_assigned=? WHERE issue_id=?", false, issue.ID); err != nil {
+	if _, err = e.Exec("UPDATE `issue_user` SET is_assigned = ? WHERE issue_id = ?", false, issue.ID); err != nil {
 		return err
 	}
 
 	// Assignee ID equals to 0 means clear assignee.
 	if issue.AssigneeID > 0 {
-		if _, err = e.Exec("UPDATE `issue_user` SET is_assigned=? WHERE uid=? AND issue_id=?", true, issue.AssigneeID, issue.ID); err != nil {
+		if _, err = e.Exec("UPDATE `issue_user` SET is_assigned = ? WHERE uid = ? AND issue_id = ?", true, issue.AssigneeID, issue.ID); err != nil {
 			return err
 		}
 	}
@@ -1112,11 +1355,29 @@ func (m *Milestone) AfterSet(colName string, _ xorm.Cell) {
 }
 
 // State returns string representation of milestone status.
-func (m *Milestone) State() string {
+func (m *Milestone) State() api.StateType {
 	if m.IsClosed {
-		return "closed"
+		return api.STATE_CLOSED
 	}
-	return "open"
+	return api.STATE_OPEN
+}
+
+func (m *Milestone) APIFormat() *api.Milestone {
+	apiMilestone := &api.Milestone{
+		ID:           m.ID,
+		State:        m.State(),
+		Title:        m.Name,
+		Description:  m.Content,
+		OpenIssues:   m.NumOpenIssues,
+		ClosedIssues: m.NumClosedIssues,
+	}
+	if m.IsClosed {
+		apiMilestone.Closed = &m.ClosedDate
+	}
+	if m.Deadline.Year() < 9999 {
+		apiMilestone.Deadline = &m.Deadline
+	}
+	return apiMilestone
 }
 
 // NewMilestone creates new milestone of repository.
@@ -1131,50 +1392,41 @@ func NewMilestone(m *Milestone) (err error) {
 		return err
 	}
 
-	if _, err = sess.Exec("UPDATE `repository` SET num_milestones=num_milestones+1 WHERE id=?", m.RepoID); err != nil {
+	if _, err = sess.Exec("UPDATE `repository` SET num_milestones = num_milestones + 1 WHERE id = ?", m.RepoID); err != nil {
 		return err
 	}
 	return sess.Commit()
 }
 
-func getMilestoneByID(e Engine, id int64) (*Milestone, error) {
-	m := &Milestone{ID: id}
+func getMilestoneByRepoID(e Engine, repoID, id int64) (*Milestone, error) {
+	m := &Milestone{
+		ID:     id,
+		RepoID: repoID,
+	}
 	has, err := e.Get(m)
 	if err != nil {
 		return nil, err
 	} else if !has {
-		return nil, ErrMilestoneNotExist{id, 0}
+		return nil, ErrMilestoneNotExist{id, repoID}
 	}
 	return m, nil
 }
 
-// GetMilestoneByID returns the milestone of given ID.
-func GetMilestoneByID(id int64) (*Milestone, error) {
-	return getMilestoneByID(x, id)
+// GetWebhookByRepoID returns milestone of repository by given ID.
+func GetMilestoneByRepoID(repoID, id int64) (*Milestone, error) {
+	return getMilestoneByRepoID(x, repoID, id)
 }
 
-// GetRepoMilestoneByID returns the milestone of given ID and repository.
-func GetRepoMilestoneByID(repoID, milestoneID int64) (*Milestone, error) {
-	m := &Milestone{ID: milestoneID, RepoID: repoID}
-	has, err := x.Get(m)
-	if err != nil {
-		return nil, err
-	} else if !has {
-		return nil, ErrMilestoneNotExist{milestoneID, repoID}
-	}
-	return m, nil
-}
-
-// GetAllRepoMilestones returns all milestones of given repository.
-func GetAllRepoMilestones(repoID int64) ([]*Milestone, error) {
+// GetMilestonesByRepoID returns all milestones of a repository.
+func GetMilestonesByRepoID(repoID int64) ([]*Milestone, error) {
 	miles := make([]*Milestone, 0, 10)
-	return miles, x.Where("repo_id=?", repoID).Find(&miles)
+	return miles, x.Where("repo_id = ?", repoID).Find(&miles)
 }
 
 // GetMilestones returns a list of milestones of given repository and status.
 func GetMilestones(repoID int64, page int, isClosed bool) ([]*Milestone, error) {
 	miles := make([]*Milestone, 0, setting.UI.IssuePagingNum)
-	sess := x.Where("repo_id=? AND is_closed=?", repoID, isClosed)
+	sess := x.Where("repo_id = ? AND is_closed = ?", repoID, isClosed)
 	if page > 0 {
 		sess = sess.Limit(setting.UI.IssuePagingNum, (page-1)*setting.UI.IssuePagingNum)
 	}
@@ -1248,7 +1500,7 @@ func changeMilestoneIssueStats(e *xorm.Session, issue *Issue) error {
 		return nil
 	}
 
-	m, err := getMilestoneByID(e, issue.MilestoneID)
+	m, err := getMilestoneByRepoID(e, issue.RepoID, issue.MilestoneID)
 	if err != nil {
 		return err
 	}
@@ -1280,9 +1532,9 @@ func ChangeMilestoneIssueStats(issue *Issue) (err error) {
 	return sess.Commit()
 }
 
-func changeMilestoneAssign(e *xorm.Session, oldMid int64, issue *Issue) error {
-	if oldMid > 0 {
-		m, err := getMilestoneByID(e, oldMid)
+func changeMilestoneAssign(e *xorm.Session, issue *Issue, oldMilestoneID int64) error {
+	if oldMilestoneID > 0 {
+		m, err := getMilestoneByRepoID(e, issue.RepoID, oldMilestoneID)
 		if err != nil {
 			return err
 		}
@@ -1294,13 +1546,13 @@ func changeMilestoneAssign(e *xorm.Session, oldMid int64, issue *Issue) error {
 
 		if err = updateMilestone(e, m); err != nil {
 			return err
-		} else if _, err = e.Exec("UPDATE `issue_user` SET milestone_id=0 WHERE issue_id=?", issue.ID); err != nil {
+		} else if _, err = e.Exec("UPDATE `issue_user` SET milestone_id = 0 WHERE issue_id = ?", issue.ID); err != nil {
 			return err
 		}
 	}
 
 	if issue.MilestoneID > 0 {
-		m, err := getMilestoneByID(e, issue.MilestoneID)
+		m, err := getMilestoneByRepoID(e, issue.RepoID, issue.MilestoneID)
 		if err != nil {
 			return err
 		}
@@ -1310,13 +1562,9 @@ func changeMilestoneAssign(e *xorm.Session, oldMid int64, issue *Issue) error {
 			m.NumClosedIssues++
 		}
 
-		if m.NumIssues == 0 {
-			return ErrWrongIssueCounter
-		}
-
 		if err = updateMilestone(e, m); err != nil {
 			return err
-		} else if _, err = e.Exec("UPDATE `issue_user` SET milestone_id=? WHERE issue_id=?", m.ID, issue.ID); err != nil {
+		} else if _, err = e.Exec("UPDATE `issue_user` SET milestone_id = ? WHERE issue_id = ?", m.ID, issue.ID); err != nil {
 			return err
 		}
 	}
@@ -1325,22 +1573,22 @@ func changeMilestoneAssign(e *xorm.Session, oldMid int64, issue *Issue) error {
 }
 
 // ChangeMilestoneAssign changes assignment of milestone for issue.
-func ChangeMilestoneAssign(oldMid int64, issue *Issue) (err error) {
+func ChangeMilestoneAssign(issue *Issue, oldMilestoneID int64) (err error) {
 	sess := x.NewSession()
 	defer sess.Close()
 	if err = sess.Begin(); err != nil {
 		return err
 	}
 
-	if err = changeMilestoneAssign(sess, oldMid, issue); err != nil {
+	if err = changeMilestoneAssign(sess, issue, oldMilestoneID); err != nil {
 		return err
 	}
 	return sess.Commit()
 }
 
-// DeleteMilestoneByID deletes a milestone by given ID.
-func DeleteMilestoneByID(id int64) error {
-	m, err := GetMilestoneByID(id)
+// DeleteMilestoneByRepoID deletes a milestone from a repository.
+func DeleteMilestoneByRepoID(repoID, id int64) error {
+	m, err := GetMilestoneByRepoID(repoID, id)
 	if err != nil {
 		if IsErrMilestoneNotExist(err) {
 			return nil
@@ -1369,9 +1617,9 @@ func DeleteMilestoneByID(id int64) error {
 		return err
 	}
 
-	if _, err = sess.Exec("UPDATE `issue` SET milestone_id=0 WHERE milestone_id=?", m.ID); err != nil {
+	if _, err = sess.Exec("UPDATE `issue` SET milestone_id = 0 WHERE milestone_id = ?", m.ID); err != nil {
 		return err
-	} else if _, err = sess.Exec("UPDATE `issue_user` SET milestone_id=0 WHERE milestone_id=?", m.ID); err != nil {
+	} else if _, err = sess.Exec("UPDATE `issue_user` SET milestone_id = 0 WHERE milestone_id = ?", m.ID); err != nil {
 		return err
 	}
 	return sess.Commit()
@@ -1458,6 +1706,16 @@ func getAttachmentByUUID(e Engine, uuid string) (*Attachment, error) {
 	return attach, nil
 }
 
+func getAttachmentsByUUIDs(e Engine, uuids []string) ([]*Attachment, error) {
+	if len(uuids) == 0 {
+		return []*Attachment{}, nil
+	}
+
+	// Silently drop invalid uuids.
+	attachments := make([]*Attachment, 0, len(uuids))
+	return attachments, e.In("uuid", uuids).Find(&attachments)
+}
+
 // GetAttachmentByUUID returns attachment by given UUID.
 func GetAttachmentByUUID(uuid string) (*Attachment, error) {
 	return getAttachmentByUUID(x, uuid)
@@ -1490,7 +1748,7 @@ func DeleteAttachments(attachments []*Attachment, remove bool) (int, error) {
 			}
 		}
 
-		if _, err := x.Delete(a.ID); err != nil {
+		if _, err := x.Delete(a); err != nil {
 			return i, err
 		}
 	}

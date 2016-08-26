@@ -6,10 +6,12 @@ package context
 
 import (
 	"fmt"
+	"io/ioutil"
 	"path"
 	"strings"
 
 	"github.com/Unknwon/com"
+	"gopkg.in/editorconfig/editorconfig-core-go.v1"
 	"gopkg.in/macaron.v1"
 
 	"github.com/gogits/git-module"
@@ -39,14 +41,14 @@ type Repository struct {
 	GitRepo      *git.Repository
 	BranchName   string
 	TagName      string
-	TreeName     string
+	TreePath     string
 	CommitID     string
 	RepoLink     string
 	CloneLink    models.CloneLink
 	CommitsCount int64
 	Mirror       *models.Mirror
 
-	PullRequest *PullRequest
+	PullRequest  *PullRequest
 }
 
 // IsOwner returns true if current user is the owner of repository.
@@ -67,6 +69,28 @@ func (r *Repository) IsWriter() bool {
 // HasAccess returns true if the current user has at least read access for this repository
 func (r *Repository) HasAccess() bool {
 	return r.AccessMode >= models.ACCESS_MODE_READ
+}
+
+// GetEditorconfig returns the .editorconfig definition if found in the
+// HEAD of the default repo branch.
+func (r *Repository) GetEditorconfig() (*editorconfig.Editorconfig, error) {
+	commit, err := r.GitRepo.GetBranchCommit(r.Repository.DefaultBranch)
+	if err != nil {
+		return nil, err
+	}
+	treeEntry, err := commit.GetTreeEntryByPath(".editorconfig")
+	if err != nil {
+		return nil, err
+	}
+	reader, err := treeEntry.Blob().Data()
+	if err != nil {
+		return nil, err
+	}
+	data, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	return editorconfig.ParseBytes(data)
 }
 
 func RetrieveBaseRepo(ctx *Context, repo *models.Repository) {
@@ -360,7 +384,7 @@ func RepoRef() macaron.Handler {
 				if ctx.Repo.GitRepo.IsBranchExist(refName) ||
 					ctx.Repo.GitRepo.IsTagExist(refName) {
 					if i < len(parts)-1 {
-						ctx.Repo.TreeName = strings.Join(parts[i+1:], "/")
+						ctx.Repo.TreePath = strings.Join(parts[i+1:], "/")
 					}
 					hasMatched = true
 					break
@@ -368,7 +392,7 @@ func RepoRef() macaron.Handler {
 			}
 			if !hasMatched && len(parts[0]) == 40 {
 				refName = parts[0]
-				ctx.Repo.TreeName = strings.Join(parts[1:], "/")
+				ctx.Repo.TreePath = strings.Join(parts[1:], "/")
 			}
 
 			if ctx.Repo.GitRepo.IsBranchExist(refName) {

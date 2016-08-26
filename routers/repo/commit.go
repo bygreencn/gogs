@@ -25,9 +25,9 @@ const (
 
 func RefCommits(ctx *context.Context) {
 	switch {
-	case len(ctx.Repo.TreeName) == 0:
+	case len(ctx.Repo.TreePath) == 0:
 		Commits(ctx)
-	case ctx.Repo.TreeName == "search":
+	case ctx.Repo.TreePath == "search":
 		SearchCommits(ctx)
 	default:
 		FileHistory(ctx)
@@ -104,7 +104,7 @@ func SearchCommits(ctx *context.Context) {
 func FileHistory(ctx *context.Context) {
 	ctx.Data["IsRepoToolbarCommits"] = true
 
-	fileName := ctx.Repo.TreeName
+	fileName := ctx.Repo.TreePath
 	if len(fileName) == 0 {
 		Commits(ctx)
 		return
@@ -145,6 +145,7 @@ func FileHistory(ctx *context.Context) {
 
 func Diff(ctx *context.Context) {
 	ctx.Data["PageIsDiff"] = true
+	ctx.Data["RequireHighlightJS"] = true
 
 	userName := ctx.Repo.Owner.Name
 	repoName := ctx.Repo.Repository.Name
@@ -152,7 +153,11 @@ func Diff(ctx *context.Context) {
 
 	commit, err := ctx.Repo.GitRepo.GetCommit(commitID)
 	if err != nil {
-		ctx.Handle(500, "Repo.GitRepo.GetCommit", err)
+		if git.IsErrNotExist(err) {
+			ctx.Handle(404, "Repo.GitRepo.GetCommit", err)
+		} else {
+			ctx.Handle(500, "Repo.GitRepo.GetCommit", err)
+		}
 		return
 	}
 
@@ -174,6 +179,13 @@ func Diff(ctx *context.Context) {
 		}
 	}
 
+	ec, err := ctx.Repo.GetEditorconfig()
+	if err != nil && !git.IsErrNotExist(err) {
+		ctx.Handle(500, "ErrGettingEditorconfig", err)
+		return
+	}
+	ctx.Data["Editorconfig"] = ec
+
 	ctx.Data["CommitID"] = commitID
 	ctx.Data["IsSplitStyle"] = ctx.Query("style") == "split"
 	ctx.Data["Username"] = userName
@@ -190,7 +202,6 @@ func Diff(ctx *context.Context) {
 		ctx.Data["BeforeSourcePath"] = setting.AppSubUrl + "/" + path.Join(userName, repoName, "src", parents[0])
 	}
 	ctx.Data["RawPath"] = setting.AppSubUrl + "/" + path.Join(userName, repoName, "raw", commitID)
-	ctx.Data["RequireHighlightJS"] = true
 	ctx.HTML(200, DIFF)
 }
 

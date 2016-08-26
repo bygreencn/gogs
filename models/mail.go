@@ -129,7 +129,7 @@ func SendCollaboratorMail(u, doer *User, repo *Repository) {
 	data := map[string]interface{}{
 		"Subject":  subject,
 		"RepoName": repoName,
-		"Link":     repo.FullLink(),
+		"Link":     repo.HTMLURL(),
 	}
 	body, err := mailRender.HTMLString(string(MAIL_NOTIFY_COLLABORATOR), data)
 	if err != nil {
@@ -153,14 +153,14 @@ func composeTplData(subject, body, link string) map[string]interface{} {
 
 func composeIssueMessage(issue *Issue, doer *User, tplName base.TplName, tos []string, info string) *mailer.Message {
 	subject := issue.MailSubject()
-	body := string(markdown.RenderSpecialLink([]byte(issue.Content), issue.Repo.FullLink(), issue.Repo.ComposeMetas()))
-	data := composeTplData(subject, body, issue.FullLink())
+	body := string(markdown.RenderSpecialLink([]byte(issue.Content), issue.Repo.HTMLURL(), issue.Repo.ComposeMetas()))
+	data := composeTplData(subject, body, issue.HTMLURL())
 	data["Doer"] = doer
 	content, err := mailRender.HTMLString(string(tplName), data)
 	if err != nil {
 		log.Error(3, "HTMLString (%s): %v", tplName, err)
 	}
-	msg := mailer.NewMessage(tos, subject, content)
+	msg := mailer.NewMessageFrom(tos, fmt.Sprintf(`"%s" <%s>`, doer.DisplayName(), setting.MailService.User), subject, content)
 	msg.Info = fmt.Sprintf("Subject: %s, %s", subject, info)
 	return msg
 }

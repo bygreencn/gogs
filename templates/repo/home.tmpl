@@ -2,6 +2,7 @@
 <div class="repository file list">
 	{{template "repo/header" .}}
 	<div class="ui container">
+		{{template "base/alert" .}}
 		<p id="repo-desc">
 			{{if .Repository.DescriptionHtml}}<span class="description has-emoji">{{.Repository.DescriptionHtml}}</span>{{else}}<span class="no-description text-italic">{{.i18n.Tr "repo.no_desc"}}</span>{{end}}
 			<a class="link" href="{{.Repository.Website}}">{{.Repository.Website}}</a>
@@ -15,7 +16,7 @@
 				</div>
 			{{end}}
 			{{template "repo/branch_dropdown" .}}
-			<div class="item fitted">
+			<div class="fitted item">
 				<div class="ui breadcrumb">
 					<a class="section" href="{{.RepoLink}}/src/{{EscapePound .BranchName}}">{{.Repository.Name}}</a>
 					{{ $n := len .Treenames}}
@@ -31,8 +32,20 @@
 					{{end}}
 				</div>
 			</div>
-			{{if eq $n 0}}
-				<div class="right fitted item">
+			<div class="right fitted item">
+				<div id="file-buttons" class="ui tiny buttons">
+					{{if .NewFileLink}}
+						<a href="{{EscapePound .NewFileLink}}" class="ui button">
+							{{.i18n.Tr "repo.new_file"}}
+						</a>
+					{{end}}
+					{{if .UploadFileLink}}
+						<!-- <a href="{{EscapePound .UploadFileLink}}" class="ui button nowrap">
+							<i class="upload icon"></i> {{.i18n.Tr "repo.upload_file"}}
+						</a> -->
+					{{end}}
+				</div>
+				{{if eq $n 0}}
 					<div class="ui action small input" id="clone-panel">
 						<button class="ui basic clone button" id="repo-clone-https" data-link="{{.CloneLink.HTTPS}}">
 							{{if UseHTTPS}}HTTPS{{else}}HTTP{{end}}
@@ -54,8 +67,8 @@
 							</div>
 						</div>
 					</div>
-				</div>
-			{{end}}
+				{{end}}
+			</div>
 		</div>
 		{{if .IsFile}}
 			{{template "repo/view_file" .}}

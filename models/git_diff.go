@@ -72,6 +72,15 @@ var (
 
 func diffToHTML(diffs []diffmatchpatch.Diff, lineType DiffLineType) template.HTML {
 	buf := bytes.NewBuffer(nil)
+
+	// Reproduce signs which are cutted for inline diff before.
+	switch lineType {
+	case DIFF_LINE_ADD:
+		buf.WriteByte('+')
+	case DIFF_LINE_DEL:
+		buf.WriteByte('-')
+	}
+
 	for i := range diffs {
 		switch {
 		case diffs[i].Type == diffmatchpatch.DiffInsert && lineType == DIFF_LINE_ADD:
@@ -155,19 +164,19 @@ func (diffSection *DiffSection) GetComputedInlineDiffFor(diffLine *DiffLine) tem
 	case DIFF_LINE_ADD:
 		compareDiffLine = diffSection.GetLine(DIFF_LINE_DEL, diffLine.RightIdx)
 		if compareDiffLine == nil {
-			return template.HTML(html.EscapeString(diffLine.Content[1:]))
+			return template.HTML(html.EscapeString(diffLine.Content))
 		}
 		diff1 = compareDiffLine.Content
 		diff2 = diffLine.Content
 	case DIFF_LINE_DEL:
 		compareDiffLine = diffSection.GetLine(DIFF_LINE_ADD, diffLine.LeftIdx)
 		if compareDiffLine == nil {
-			return template.HTML(html.EscapeString(diffLine.Content[1:]))
+			return template.HTML(html.EscapeString(diffLine.Content))
 		}
 		diff1 = diffLine.Content
 		diff2 = compareDiffLine.Content
 	default:
-		return template.HTML(html.EscapeString(diffLine.Content[1:]))
+		return template.HTML(html.EscapeString(diffLine.Content))
 	}
 
 	diffRecord := diffMatchPatch.DiffMain(diff1[1:], diff2[1:], true)
@@ -434,7 +443,7 @@ func GetDiffRange(repoPath, beforeCommitID, afterCommitID string, maxLines, maxL
 		return nil, fmt.Errorf("Start: %v", err)
 	}
 
-	pid := process.Add(fmt.Sprintf("GetDiffRange (%s)", repoPath), cmd)
+	pid := process.Add(fmt.Sprintf("GetDiffRange [repo_path: %s]", repoPath), cmd)
 	defer process.Remove(pid)
 
 	diff, err := ParsePatch(maxLines, maxLineCharacteres, maxFiles, stdout)

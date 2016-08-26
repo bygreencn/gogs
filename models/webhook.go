@@ -58,8 +58,9 @@ func IsValidHookContentType(name string) bool {
 }
 
 type HookEvents struct {
-	Create bool `json:"create"`
-	Push   bool `json:"push"`
+	Create      bool `json:"create"`
+	Push        bool `json:"push"`
+	PullRequest bool `json:"pull_request"`
 }
 
 // HookEvent represents events that will delivery hook.
@@ -157,13 +158,22 @@ func (w *Webhook) HasPushEvent() bool {
 		(w.ChooseEvents && w.HookEvents.Push)
 }
 
+// HasPullRequestEvent returns true if hook enabled pull request event.
+func (w *Webhook) HasPullRequestEvent() bool {
+	return w.SendEverything ||
+		(w.ChooseEvents && w.HookEvents.PullRequest)
+}
+
 func (w *Webhook) EventsArray() []string {
-	events := make([]string, 0, 2)
+	events := make([]string, 0, 3)
 	if w.HasCreateEvent() {
 		events = append(events, "create")
 	}
 	if w.HasPushEvent() {
 		events = append(events, "push")
+	}
+	if w.HasPullRequestEvent() {
+		events = append(events, "pull_request")
 	}
 	return events
 }
@@ -203,15 +213,18 @@ func GetWebhookByOrgID(orgID, id int64) (*Webhook, error) {
 }
 
 // GetActiveWebhooksByRepoID returns all active webhooks of repository.
-func GetActiveWebhooksByRepoID(repoID int64) (ws []*Webhook, err error) {
-	err = x.Where("repo_id=?", repoID).And("is_active=?", true).Find(&ws)
-	return ws, err
+func GetActiveWebhooksByRepoID(repoID int64) ([]*Webhook, error) {
+	webhooks := make([]*Webhook, 0, 5)
+	return webhooks, x.Find(&webhooks, &Webhook{
+		RepoID:   repoID,
+		IsActive: true,
+	})
 }
 
-// GetWebhooksByRepoID returns all webhooks of repository.
-func GetWebhooksByRepoID(repoID int64) (ws []*Webhook, err error) {
-	err = x.Find(&ws, &Webhook{RepoID: repoID})
-	return ws, err
+// GetWebhooksByRepoID returns all webhooks of a repository.
+func GetWebhooksByRepoID(repoID int64) ([]*Webhook, error) {
+	webhooks := make([]*Webhook, 0, 5)
+	return webhooks, x.Find(&webhooks, &Webhook{RepoID: repoID})
 }
 
 // UpdateWebhook updates information of webhook.
@@ -309,8 +322,9 @@ func IsValidHookTaskType(name string) bool {
 type HookEventType string
 
 const (
-	HOOK_EVENT_CREATE HookEventType = "create"
-	HOOK_EVENT_PUSH   HookEventType = "push"
+	HOOK_EVENT_CREATE       HookEventType = "create"
+	HOOK_EVENT_PUSH         HookEventType = "push"
+	HOOK_EVENT_PULL_REQUEST HookEventType = "pull_request"
 )
 
 // HookRequest represents hook task request information.
@@ -422,17 +436,13 @@ func UpdateHookTask(t *HookTask) error {
 
 // PrepareWebhooks adds new webhooks to task queue for given payload.
 func PrepareWebhooks(repo *Repository, event HookEventType, p api.Payloader) error {
-	if err := repo.GetOwner(); err != nil {
-		return fmt.Errorf("GetOwner: %v", err)
-	}
-
 	ws, err := GetActiveWebhooksByRepoID(repo.ID)
 	if err != nil {
 		return fmt.Errorf("GetActiveWebhooksByRepoID: %v", err)
 	}
 
 	// check if repo belongs to org and append additional webhooks
-	if repo.Owner.IsOrganization() {
+	if repo.MustOwner().IsOrganization() {
 		// get hooks for org
 		orgws, err := GetActiveWebhooksByOrgID(repo.OwnerID)
 		if err != nil {
@@ -456,6 +466,10 @@ func PrepareWebhooks(repo *Repository, event HookEventType, p api.Payloader) err
 			if !w.HasPushEvent() {
 				continue
 			}
+		case HOOK_EVENT_PULL_REQUEST:
+			if !w.HasPullRequestEvent() {
+				continue
+			}
 		}
 
 		// Use separate objects so modifcations won't be made on payload on non-Gogs type hooks.
@@ -477,7 +491,7 @@ func PrepareWebhooks(repo *Repository, event HookEventType, p api.Payloader) err
 			URL:         w.URL,
 			Payloader:   payloader,
 			ContentType: w.ContentType,
-			EventType:   HOOK_EVENT_PUSH,
+			EventType:   event,
 			IsSSL:       w.IsSSL,
 		}); err != nil {
 			return fmt.Errorf("CreateHookTask: %v", err)

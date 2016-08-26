@@ -4,19 +4,8 @@
   display: inline-block;
   background-size: contain;
 }
-.ui.header,
-.ui.menu,
-.ui.button,
-h1,
-h2,
-h3,
-h4,
-h5,
-input {
-  font-family: "Helvetica Neue", "Meiryo Ui", "Microsoft YaHei", Arial, Helvetica, sans-serif !important;
-}
 body {
-  font-family: "Helvetica Neue", "Meiryo Ui", "Microsoft YaHei", Arial, Helvetica, sans-serif !important;
+  font-family: "Helvetica Neue", "Microsoft YaHei", Arial, Helvetica, sans-serif !important;
   background-color: #fff;
   overflow-y: scroll;
 }
@@ -103,6 +92,9 @@ code.wrap {
 }
 .following.bar .avatar > .ui.image {
   margin-right: 0;
+}
+.following.bar .avatar .octicon-triangle-down {
+  margin-top: 6.5px;
 }
 .following.bar .searchbox {
   background-color: #f4f4f4 !important;
@@ -1232,6 +1224,14 @@ footer .ui.language .menu {
 .repository.file.list .choose.reference .header .icon {
   font-size: 1.4em;
 }
+.repository.file.list #file-buttons {
+  font-weight: normal;
+  margin-top: -3px;
+  padding-right: 20px;
+}
+.repository.file.list #file-buttons .ui.button {
+  padding: 8px 10px;
+}
 .repository.file.list #repo-files-table thead th {
   padding-top: 8px;
   padding-bottom: 5px;
@@ -1267,6 +1267,36 @@ footer .ui.language .menu {
 .repository.file.list #file-content .header .icon {
   font-size: 1em;
   margin-top: -2px;
+}
+.repository.file.list #file-content .header .file-actions {
+  padding-left: 20px;
+}
+.repository.file.list #file-content .header .file-actions .btn-octicon {
+  display: inline-block;
+  padding: 5px;
+  margin-left: 5px;
+  line-height: 1;
+  color: #767676;
+  vertical-align: middle;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.repository.file.list #file-content .header .file-actions .btn-octicon:hover {
+  color: #4078c0;
+}
+.repository.file.list #file-content .header .file-actions .btn-octicon-danger:hover {
+  color: #bd2c00;
+}
+.repository.file.list #file-content .header .file-actions .btn-octicon.disabled {
+  color: #bbb;
+  cursor: default;
+}
+.repository.file.list #file-content .header .file-actions #delete-file-form {
+  display: inline-block;
+}
+.repository.file.list #file-content .view-raw {
+  padding: 5px;
 }
 .repository.file.list #file-content .view-raw * {
   max-width: 100%;
@@ -1332,6 +1362,81 @@ footer .ui.language .menu {
 }
 .repository.file.list .sidebar .octicon {
   width: 16px;
+}
+.repository.file.editor .treepath {
+  width: 100%;
+}
+.repository.file.editor .treepath input {
+  vertical-align: middle;
+  box-shadow: rgba(0, 0, 0, 0.0745098) 0px 1px 2px inset;
+  width: inherit;
+  padding: 7px 8px;
+  margin-right: 5px;
+}
+.repository.file.editor .tabular.menu .octicon {
+  margin-right: 5px;
+}
+.repository.file.editor .commit-form-wrapper {
+  padding-left: 64px;
+}
+.repository.file.editor .commit-form-wrapper .commit-avatar {
+  float: left;
+  margin-left: -64px;
+  width: 3em;
+  height: auto;
+}
+.repository.file.editor .commit-form-wrapper .commit-form {
+  position: relative;
+  padding: 15px;
+  margin-bottom: 10px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+}
+.repository.file.editor .commit-form-wrapper .commit-form:before,
+.repository.file.editor .commit-form-wrapper .commit-form:after {
+  right: 100%;
+  top: 20px;
+  border: solid transparent;
+  content: " ";
+  height: 0;
+  width: 0;
+  position: absolute;
+  pointer-events: none;
+}
+.repository.file.editor .commit-form-wrapper .commit-form:before {
+  border-right-color: #D4D4D5;
+  border-width: 9px;
+  margin-top: -9px;
+}
+.repository.file.editor .commit-form-wrapper .commit-form:after {
+  border-right-color: #f7f7f7;
+  border-width: 8px;
+  margin-top: -8px;
+}
+.repository.file.editor .commit-form-wrapper .commit-form:after {
+  border-right-color: #fff;
+}
+.repository.file.editor .commit-form-wrapper .commit-form .quick-pull-choice .branch-name {
+  display: inline-block;
+  padding: 3px 6px;
+  font: 12px Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  color: rgba(0, 0, 0, 0.65);
+  background-color: rgba(209, 227, 237, 0.45);
+  border-radius: 3px;
+}
+.repository.file.editor .commit-form-wrapper .commit-form .quick-pull-choice .new-branch-name-input {
+  position: relative;
+  margin-left: 25px;
+}
+.repository.file.editor .commit-form-wrapper .commit-form .quick-pull-choice .new-branch-name-input input {
+  width: 240px !important;
+  padding-left: 26px !important;
+}
+.repository.file.editor .commit-form-wrapper .commit-form .quick-pull-choice .octicon-git-branch {
+  position: absolute;
+  top: 9px;
+  left: 10px;
+  color: #b0c4ce;
 }
 .repository.options #interval {
   width: 100px!important;
@@ -1542,6 +1647,13 @@ footer .ui.language .menu {
   width: auto;
   margin: 0;
   vertical-align: middle;
+}
+.repository.view.issue .comment-list .comment .content > .bottom.segment span.ui.image {
+  font-size: 8vw;
+  color: #000000;
+}
+.repository.view.issue .comment-list .comment .content > .bottom.segment span.ui.image:hover {
+  color: #000000;
 }
 .repository.view.issue .comment-list .comment .ui.form .field:first-child {
   clear: none;
@@ -2065,6 +2177,14 @@ footer .ui.language .menu {
   margin-left: 5px;
   margin-top: -3px;
 }
+.repository.settings.webhook .events .column {
+  padding-bottom: 0;
+}
+.repository.settings.webhook .events .help {
+  font-size: 13px;
+  margin-left: 26px;
+  padding-top: 0;
+}
 .user-cards .list {
   padding: 0;
 }
@@ -2311,6 +2431,80 @@ footer .ui.language .menu {
 #transfer-repo-modal .ui.message,
 #delete-repo-modal .ui.message {
   width: 100%!important;
+}
+.tab-size-1 {
+  tab-size: 1 !important;
+  -moz-tab-size: 1 !important;
+}
+.tab-size-2 {
+  tab-size: 2 !important;
+  -moz-tab-size: 2 !important;
+}
+.tab-size-3 {
+  tab-size: 3 !important;
+  -moz-tab-size: 3 !important;
+}
+.tab-size-4 {
+  tab-size: 4 !important;
+  -moz-tab-size: 4 !important;
+}
+.tab-size-5 {
+  tab-size: 5 !important;
+  -moz-tab-size: 5 !important;
+}
+.tab-size-6 {
+  tab-size: 6 !important;
+  -moz-tab-size: 6 !important;
+}
+.tab-size-7 {
+  tab-size: 7 !important;
+  -moz-tab-size: 7 !important;
+}
+.tab-size-8 {
+  tab-size: 8 !important;
+  -moz-tab-size: 8 !important;
+}
+.tab-size-9 {
+  tab-size: 9 !important;
+  -moz-tab-size: 9 !important;
+}
+.tab-size-10 {
+  tab-size: 10 !important;
+  -moz-tab-size: 10 !important;
+}
+.tab-size-11 {
+  tab-size: 11 !important;
+  -moz-tab-size: 11 !important;
+}
+.tab-size-12 {
+  tab-size: 12 !important;
+  -moz-tab-size: 12 !important;
+}
+.tab-size-13 {
+  tab-size: 13 !important;
+  -moz-tab-size: 13 !important;
+}
+.tab-size-14 {
+  tab-size: 14 !important;
+  -moz-tab-size: 14 !important;
+}
+.tab-size-15 {
+  tab-size: 15 !important;
+  -moz-tab-size: 15 !important;
+}
+.tab-size-16 {
+  tab-size: 16 !important;
+  -moz-tab-size: 16 !important;
+}
+.CodeMirror {
+  font: 14px Consolas, "Liberation Mono", Menlo, Courier, monospace;
+}
+.CodeMirror.cm-s-default {
+  border-radius: 3px;
+  padding: 0 !important;
+}
+.CodeMirror .cm-comment {
+  background: inherit !important;
 }
 .organization {
   padding-top: 15px;

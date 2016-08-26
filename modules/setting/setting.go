@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,9 +32,10 @@ import (
 type Scheme string
 
 const (
-	HTTP  Scheme = "http"
-	HTTPS Scheme = "https"
-	FCGI  Scheme = "fcgi"
+	HTTP        Scheme = "http"
+	HTTPS       Scheme = "https"
+	FCGI        Scheme = "fcgi"
+	UNIX_SOCKET Scheme = "unix"
 )
 
 type LandingPage string
@@ -44,7 +46,7 @@ const (
 )
 
 var (
-	// Build information
+	// Build information should only be set by -ldflags.
 	BuildTime    string
 	BuildGitHash string
 
@@ -58,16 +60,17 @@ var (
 	AppDataPath    string
 
 	// Server settings
-	Protocol           Scheme
-	Domain             string
-	HttpAddr, HttpPort string
-	LocalURL           string
-	OfflineMode        bool
-	DisableRouterLog   bool
-	CertFile, KeyFile  string
-	StaticRootPath     string
-	EnableGzip         bool
-	LandingPageUrl     LandingPage
+	Protocol             Scheme
+	Domain               string
+	HTTPAddr, HTTPPort   string
+	LocalURL             string
+	OfflineMode          bool
+	DisableRouterLog     bool
+	CertFile, KeyFile    string
+	StaticRootPath       string
+	EnableGzip           bool
+	LandingPageURL       LandingPage
+	UnixSocketPermission uint32
 
 	SSH struct {
 		Disabled            bool           `ini:"DISABLE_SSH"`
@@ -111,6 +114,21 @@ var (
 		ForcePrivate           bool
 		MaxCreationLimit       int
 		PullRequestQueueLength int
+
+		// Repository editor settings
+		Editor struct {
+			LineWrapExtensions   []string
+			PreviewableFileModes []string
+		} `ini:"-"`
+
+		// Repository upload settings
+		Upload struct {
+			Enabled      bool
+			TempPath     string
+			AllowedTypes []string `delim:"|"`
+			FileMaxSize  int64
+			MaxFiles     int
+		} `ini:"-"`
 	}
 	RepoRootPath string
 	ScriptType   string
@@ -138,6 +156,7 @@ var (
 	Markdown struct {
 		EnableHardLineBreak bool
 		CustomURLSchemes    []string `ini:"CUSTOM_URL_SCHEMES"`
+		FileExtensions      []string
 	}
 
 	// Picture settings
@@ -164,7 +183,7 @@ var (
 
 	// Cache settings
 	CacheAdapter  string
-	CacheInternal int
+	CacheInterval int
 	CacheConn     string
 
 	// Session settings
@@ -239,6 +258,7 @@ var (
 	HasRobotsTxt bool
 )
 
+// DateLang transforms standard language locale name to corresponding value in datetime plugin.
 func DateLang(lang string) string {
 	name, ok := dateLangs[lang]
 	if ok {
@@ -367,11 +387,19 @@ func NewContext() {
 		KeyFile = sec.Key("KEY_FILE").String()
 	} else if sec.Key("PROTOCOL").String() == "fcgi" {
 		Protocol = FCGI
+	} else if sec.Key("PROTOCOL").String() == "unix" {
+		Protocol = UNIX_SOCKET
+		UnixSocketPermissionRaw := sec.Key("UNIX_SOCKET_PERMISSION").MustString("666")
+		UnixSocketPermissionParsed, err := strconv.ParseUint(UnixSocketPermissionRaw, 8, 32)
+		if err != nil || UnixSocketPermissionParsed > 0777 {
+			log.Fatal(4, "Fail to parse unixSocketPermission: %s", UnixSocketPermissionRaw)
+		}
+		UnixSocketPermission = uint32(UnixSocketPermissionParsed)
 	}
 	Domain = sec.Key("DOMAIN").MustString("localhost")
-	HttpAddr = sec.Key("HTTP_ADDR").MustString("0.0.0.0")
-	HttpPort = sec.Key("HTTP_PORT").MustString("3000")
-	LocalURL = sec.Key("LOCAL_ROOT_URL").MustString(string(Protocol) + "://localhost:" + HttpPort + "/")
+	HTTPAddr = sec.Key("HTTP_ADDR").MustString("0.0.0.0")
+	HTTPPort = sec.Key("HTTP_PORT").MustString("3000")
+	LocalURL = sec.Key("LOCAL_ROOT_URL").MustString(string(Protocol) + "://localhost:" + HTTPPort + "/")
 	OfflineMode = sec.Key("OFFLINE_MODE").MustBool()
 	DisableRouterLog = sec.Key("DISABLE_ROUTER_LOG").MustBool()
 	StaticRootPath = sec.Key("STATIC_ROOT_PATH").MustString(workDir)
@@ -380,9 +408,9 @@ func NewContext() {
 
 	switch sec.Key("LANDING_PAGE").MustString("home") {
 	case "explore":
-		LandingPageUrl = LANDING_PAGE_EXPLORE
+		LandingPageURL = LANDING_PAGE_EXPLORE
 	default:
-		LandingPageUrl = LANDING_PAGE_HOME
+		LandingPageURL = LANDING_PAGE_HOME
 	}
 
 	SSH.RootPath = path.Join(homeDir, ".ssh")
@@ -469,6 +497,14 @@ func NewContext() {
 	ScriptType = sec.Key("SCRIPT_TYPE").MustString("bash")
 	if err = Cfg.Section("repository").MapTo(&Repository); err != nil {
 		log.Fatal(4, "Fail to map Repository settings: %v", err)
+	} else if err = Cfg.Section("repository.editor").MapTo(&Repository.Editor); err != nil {
+		log.Fatal(4, "Fail to map Repository.Editor settings: %v", err)
+	} else if err = Cfg.Section("repository.upload").MapTo(&Repository.Upload); err != nil {
+		log.Fatal(4, "Fail to map Repository.Upload settings: %v", err)
+	}
+
+	if !filepath.IsAbs(Repository.Upload.TempPath) {
+		Repository.Upload.TempPath = path.Join(workDir, Repository.Upload.TempPath)
 	}
 
 	sec = Cfg.Section("picture")
@@ -518,7 +554,7 @@ func NewContext() {
 	} else if err = Cfg.Section("git").MapTo(&Git); err != nil {
 		log.Fatal(4, "Fail to map Git settings: %v", err)
 	} else if err = Cfg.Section("mirror").MapTo(&Mirror); err != nil {
-		log.Fatal(4, "Fail to map API settings: %v", err)
+		log.Fatal(4, "Fail to map Mirror settings: %v", err)
 	} else if err = Cfg.Section("api").MapTo(&API); err != nil {
 		log.Fatal(4, "Fail to map API settings: %v", err)
 	}
@@ -645,7 +681,7 @@ func newCacheService() {
 	CacheAdapter = Cfg.Section("cache").Key("ADAPTER").In("memory", []string{"memory", "redis", "memcache"})
 	switch CacheAdapter {
 	case "memory":
-		CacheInternal = Cfg.Section("cache").Key("INTERVAL").MustInt(60)
+		CacheInterval = Cfg.Section("cache").Key("INTERVAL").MustInt(60)
 	case "redis", "memcache":
 		CacheConn = strings.Trim(Cfg.Section("cache").Key("HOST").String(), "\" ")
 	default:

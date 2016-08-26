@@ -110,6 +110,15 @@ func reqAdmin() macaron.Handler {
 	}
 }
 
+func reqRepoWriter() macaron.Handler {
+	return func(ctx *context.Context) {
+		if !ctx.Repo.IsWriter() {
+			ctx.Error(403)
+			return
+		}
+	}
+}
+
 func orgAssignment(args ...bool) macaron.Handler {
 	var (
 		assignOrg  bool
@@ -195,6 +204,7 @@ func RegisterRoutes(m *macaron.Macaron) {
 		}, reqToken())
 
 		m.Group("/user", func() {
+			m.Get("", user.GetAuthenticatedUser)
 			m.Combo("/emails").Get(user.ListEmails).
 				Post(bind(api.CreateEmailOption{}), user.AddEmail).
 				Delete(bind(api.CreateEmailOption{}), user.DeleteEmail)
@@ -234,6 +244,7 @@ func RegisterRoutes(m *macaron.Macaron) {
 					m.Combo("/:id").Patch(bind(api.EditHookOption{}), repo.EditHook).
 						Delete(repo.DeleteHook)
 				})
+				m.Put("/collaborators/:collaborator", bind(api.AddCollaboratorOption{}), repo.AddCollaborator)
 				m.Get("/raw/*", context.RepoRef(), repo.GetRawFile)
 				m.Get("/archive/*", repo.GetArchive)
 				m.Group("/branches", func() {
@@ -265,6 +276,13 @@ func RegisterRoutes(m *macaron.Macaron) {
 						Post(bind(api.CreateLabelOption{}), repo.CreateLabel)
 					m.Combo("/:id").Get(repo.GetLabel).Patch(bind(api.EditLabelOption{}), repo.EditLabel).
 						Delete(repo.DeleteLabel)
+				})
+				m.Group("/milestones", func() {
+					m.Combo("").Get(repo.ListMilestones).
+						Post(reqRepoWriter(), bind(api.CreateMilestoneOption{}), repo.CreateMilestone)
+					m.Combo("/:id").Get(repo.GetMilestone).
+						Patch(reqRepoWriter(), bind(api.EditMilestoneOption{}), repo.EditMilestone).
+						Delete(reqRepoWriter(), repo.DeleteMilestone)
 				})
 			}, repoAssignment())
 		}, reqToken())

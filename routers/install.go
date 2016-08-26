@@ -80,7 +80,7 @@ func GlobalInit() {
 	if models.EnableSQLite3 {
 		log.Info("SQLite3 Supported")
 	}
-	if models.EnableTidb {
+	if models.EnableTiDB {
 		log.Info("TiDB Supported")
 	}
 	if setting.SupportMiniWinService {
@@ -110,7 +110,7 @@ func InstallInit(ctx *context.Context) {
 	if models.EnableSQLite3 {
 		dbOpts = append(dbOpts, "SQLite3")
 	}
-	if models.EnableTidb {
+	if models.EnableTiDB {
 		dbOpts = append(dbOpts, "TiDB")
 	}
 	ctx.Data["DbOptions"] = dbOpts
@@ -134,7 +134,7 @@ func Install(ctx *context.Context) {
 			ctx.Data["CurDbOption"] = "SQLite3"
 		}
 	case "tidb":
-		if models.EnableTidb {
+		if models.EnableTiDB {
 			ctx.Data["CurDbOption"] = "TiDB"
 		}
 	}
@@ -153,7 +153,7 @@ func Install(ctx *context.Context) {
 
 	form.Domain = setting.Domain
 	form.SSHPort = setting.SSH.Port
-	form.HTTPPort = setting.HttpPort
+	form.HTTPPort = setting.HTTPPort
 	form.AppUrl = setting.AppUrl
 	form.LogRootPath = setting.LogRootPath
 

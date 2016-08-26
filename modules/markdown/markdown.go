@@ -53,10 +53,11 @@ func isLink(link []byte) bool {
 // IsMarkdownFile reports whether name looks like a Markdown file
 // based on its extension.
 func IsMarkdownFile(name string) bool {
-	name = strings.ToLower(name)
-	switch filepath.Ext(name) {
-	case ".md", ".markdown", ".mdown", ".mkd":
-		return true
+	extension := strings.ToLower(filepath.Ext(name))
+	for _, ext := range setting.Markdown.FileExtensions {
+		if strings.ToLower(ext) == extension {
+			return true
+		}
 	}
 	return false
 }
@@ -90,7 +91,9 @@ var (
 	IssueAlphanumericPattern = regexp.MustCompile(`( |^|\()[A-Z]{1,10}-[1-9][0-9]*\b`)
 
 	// Sha1CurrentPattern matches string that represents a commit SHA, e.g. d8a994ef243349f321568f9e36d5c3f444b99cae
-	Sha1CurrentPattern = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
+	// FIXME: this pattern matches pure numbers as well, right now we do a hack to check in RenderSha1CurrentPattern
+	// by converting string to a number.
+	Sha1CurrentPattern = regexp.MustCompile(`\b[0-9a-f]{7,40}\b`)
 )
 
 // FindAllMentions matches mention patterns in given content
@@ -261,6 +264,9 @@ func RenderIssueIndexPattern(rawBytes []byte, urlPrefix string, metas map[string
 // RenderSha1CurrentPattern renders SHA1 strings to corresponding links that assumes in the same repository.
 func RenderSha1CurrentPattern(rawBytes []byte, urlPrefix string) []byte {
 	return []byte(Sha1CurrentPattern.ReplaceAllStringFunc(string(rawBytes[:]), func(m string) string {
+		if com.StrTo(m).MustInt() > 0 {
+			return m
+		}
 		return fmt.Sprintf(`<a href="%s/commit/%s"><code>%s</code></a>`, urlPrefix, m, base.ShortSha(string(m)))
 	}))
 }

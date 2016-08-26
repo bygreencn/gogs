@@ -9,12 +9,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"mime"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"golang.org/x/net/html/charset"
 	"golang.org/x/text/transform"
+	"gopkg.in/editorconfig/editorconfig-core-go.v1"
 
 	"github.com/gogits/gogs/models"
 	"github.com/gogits/gogs/modules/base"
@@ -102,6 +105,19 @@ func NewFuncMap() []template.FuncMap {
 		"RenderCommitMessage": RenderCommitMessage,
 		"ThemeColorMetaTag": func() string {
 			return setting.UI.ThemeColorMetaTag
+		},
+		"FilenameIsImage": func(filename string) bool {
+			mimeType := mime.TypeByExtension(filepath.Ext(filename))
+			return strings.HasPrefix(mimeType, "image/")
+		},
+		"TabSizeClass": func(ec *editorconfig.Editorconfig, filename string) string {
+			if ec != nil {
+				def := ec.GetDefinitionForFilename(filename)
+				if def.TabWidth > 0 {
+					return fmt.Sprintf("tab-size-%d", def.TabWidth)
+				}
+			}
+			return "tab-size-8"
 		},
 	}}
 }
@@ -212,7 +228,6 @@ func RenderCommitMessage(full bool, msg, urlPrefix string, metas map[string]stri
 type Actioner interface {
 	GetOpType() int
 	GetActUserName() string
-	GetActEmail() string
 	GetRepoUserName() string
 	GetRepoName() string
 	GetRepoPath() string

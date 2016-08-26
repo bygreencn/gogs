@@ -108,8 +108,9 @@ func ParseHookEvent(form auth.WebhookForm) *models.HookEvent {
 		SendEverything: form.SendEverything(),
 		ChooseEvents:   form.ChooseEvents(),
 		HookEvents: models.HookEvents{
-			Create: form.Create,
-			Push:   form.Push,
+			Create:      form.Create,
+			Push:        form.Push,
+			PullRequest: form.PullRequest,
 		},
 	}
 }
@@ -346,36 +347,41 @@ func SlackHooksEditPost(ctx *context.Context, form auth.NewSlackHookForm) {
 }
 
 func TestWebhook(ctx *context.Context) {
+	// Grab latest commit or fake one if it's empty repository.
+	commit := ctx.Repo.Commit
+	if commit == nil {
+		ghost := models.NewGhostUser()
+		commit = &git.Commit{
+			ID:            git.MustIDFromString(git.EMPTY_SHA),
+			Author:        ghost.NewGitSig(),
+			Committer:     ghost.NewGitSig(),
+			CommitMessage: "This is a fake commit",
+		}
+	}
+
+	apiUser := ctx.User.APIFormat()
 	p := &api.PushPayload{
 		Ref:    git.BRANCH_PREFIX + ctx.Repo.Repository.DefaultBranch,
-		Before: ctx.Repo.CommitID,
-		After:  ctx.Repo.CommitID,
+		Before: commit.ID.String(),
+		After:  commit.ID.String(),
 		Commits: []*api.PayloadCommit{
 			{
-				ID:      ctx.Repo.CommitID,
-				Message: ctx.Repo.Commit.Message(),
-				URL:     ctx.Repo.Repository.FullLink() + "/commit/" + ctx.Repo.CommitID,
-				Author: &api.PayloadAuthor{
-					Name:  ctx.Repo.Commit.Author.Name,
-					Email: ctx.Repo.Commit.Author.Email,
+				ID:      commit.ID.String(),
+				Message: commit.Message(),
+				URL:     ctx.Repo.Repository.HTMLURL() + "/commit/" + commit.ID.String(),
+				Author: &api.PayloadUser{
+					Name:  commit.Author.Name,
+					Email: commit.Author.Email,
 				},
-				Committer: &api.PayloadCommitter{
-					Name:  ctx.Repo.Commit.Committer.Name,
-					Email: ctx.Repo.Commit.Committer.Email,
+				Committer: &api.PayloadUser{
+					Name:  commit.Committer.Name,
+					Email: commit.Committer.Email,
 				},
 			},
 		},
-		Repo: ctx.Repo.Repository.ComposePayload(),
-		Pusher: &api.PayloadAuthor{
-			Name:     ctx.User.Name,
-			Email:    ctx.User.Email,
-			UserName: ctx.User.Name,
-		},
-		Sender: &api.PayloadUser{
-			UserName:  ctx.User.Name,
-			ID:        ctx.User.ID,
-			AvatarUrl: ctx.User.AvatarLink(),
-		},
+		Repo:   ctx.Repo.Repository.APIFormat(nil),
+		Pusher: apiUser,
+		Sender: apiUser,
 	}
 	if err := models.PrepareWebhooks(ctx.Repo.Repository, models.HOOK_EVENT_PUSH, p); err != nil {
 		ctx.Flash.Error("PrepareWebhooks: " + err.Error())
