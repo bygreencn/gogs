@@ -7,11 +7,13 @@
 REM @set GOROOT=c:\Go
 REM @set GOPATH=c:\Projects\Go
 
-REM go get -u github.com/...
+REM gopm get -u -g -v
+
+REM go get -u -tags "sqlite cert" github.com/gogits/gogs -v
 
 cd %GOGS_SOURCE_PATH%
 go clean 
-go clean -tags "tidb sqlite cert"
+go clean -tags "sqlite cert"
 
 @set CGO_ENABLED=1
 
@@ -24,9 +26,11 @@ set GOOS=windows
 set GOARCH=386
 call make.bat --no-clean
 cd %GOGS_SOURCE_PATH%
-go build -tags "tidb sqlite cert" -v
+go build -tags "sqlite cert" -v
 copy gogs.exe gogs-i386.exe
-go clean -tags "tidb sqlite cert" -v
+go clean -tags "sqlite cert" -v
+
+
 
 @echo *************************************************************
 @echo 1. Setting up environment for MinGW-w64 GCC for 64-bit...
@@ -37,9 +41,9 @@ set GOOS=windows
 set GOARCH=amd64
 call make.bat --no-clean
 cd %GOGS_SOURCE_PATH%
-go build -tags "tidb sqlite cert" -v 
+go build -tags "sqlite cert" -v
 copy gogs.exe gogs-x86_x64.exe
-go clean -tags "tidb sqlite cert" -v
+go clean -tags "sqlite cert" -v
 
 set PATH=%SYS_PATH%
 echo on
