@@ -4,11 +4,10 @@
 @set GOGS_SOURCE_PATH=%CD% 
 @set MINGW64_I386_PATH=C:\mingw-w64\mingw32\bin
 @set MINGW64_X86X64_PATH=C:\mingw-w64\mingw64\bin
-REM @set GOROOT=c:\Go
-REM @set GOPATH=c:\Projects\Go
+@set GOROOT=c:\Go
+@set GOPATH=c:\Projects\Go
 
 REM gopm get -u -g -v
-
 REM go get -u -tags "sqlite cert" github.com/gogits/gogs -v
 
 cd %GOGS_SOURCE_PATH%
