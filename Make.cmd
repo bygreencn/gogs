@@ -7,8 +7,8 @@
 @set GOROOT=c:\Go
 @set GOPATH=c:\Projects\Go
 
-REM gopm get -u -g -v
-REM go get -u -tags "sqlite cert" github.com/gogits/gogs -v
+gopm get -u -g -v
+go get -u -tags "sqlite cert" github.com/gogits/gogs
 
 cd %GOGS_SOURCE_PATH%
 go clean 
