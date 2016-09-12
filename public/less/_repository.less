@@ -126,7 +126,8 @@
 
 	#clone-panel {
 		margin-top: -8px;
-		width: 100%;
+		margin-left: 5px;
+		width: 350px;
 
 		input {
 			border-radius: 0;
@@ -161,9 +162,9 @@
 		#file-buttons {
 			font-weight: normal;
 			margin-top: -3px;
-			padding-right: 20px;
 			.ui.button {
 				padding: 8px 10px;
+				font-weight: normal;
 			}
 		}
 
@@ -277,8 +278,6 @@
 				.lines-num,
 				.lines-code {
 					padding: 0;
-
-
 					pre,
 					ol,
 					.hljs {
@@ -286,11 +285,13 @@
 						margin: 0;
 						padding: 0 !important;
 						li {
-							padding-left: 5px;
 							display: inline-block;
 							width: 100%;
 							&.active {
 								background: #ffffdd;
+							}
+							&:before {
+								content: ' ';
 							}
 						}
 					}
@@ -1303,7 +1304,7 @@
 	padding-top: 15px;
 }
 
-.ui.comments {
+.ui.form {
 	.dropzone {
 		width: 100%;
 		margin-bottom: 10px;

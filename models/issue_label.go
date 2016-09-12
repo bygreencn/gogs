@@ -7,6 +7,7 @@ package models
 import (
 	"fmt"
 	"html/template"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -16,6 +17,40 @@ import (
 
 	"github.com/gogits/gogs/modules/base"
 )
+
+var labelColorPattern = regexp.MustCompile("#([a-fA-F0-9]{6})")
+
+// GetLabelTemplateFile loads the label template file by given name,
+// then parses and returns a list of name-color pairs.
+func GetLabelTemplateFile(name string) ([][2]string, error) {
+	data, err := getRepoInitFile("label", name)
+	if err != nil {
+		return nil, fmt.Errorf("getRepoInitFile: %v", err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	list := make([][2]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if len(line) == 0 {
+			continue
+		}
+
+		fields := strings.SplitN(line, " ", 2)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("line is malformed: %s", line)
+		}
+
+		if !labelColorPattern.MatchString(fields[0]) {
+			return nil, fmt.Errorf("bad HTML color code in line: %s", line)
+		}
+
+		fields[1] = strings.TrimSpace(fields[1])
+		list = append(list, [2]string{fields[1], fields[0]})
+	}
+
+	return list, nil
+}
 
 // Label represents a label of repository for issues.
 type Label struct {
@@ -52,7 +87,7 @@ func (l *Label) ForegroundColor() template.CSS {
 			b := float32(0xFF & color)
 			luminance := (0.2126*r + 0.7152*g + 0.0722*b) / 255
 
-			if luminance < 0.5 {
+			if luminance < 0.66 {
 				return template.CSS("#fff")
 			}
 		}
@@ -62,9 +97,9 @@ func (l *Label) ForegroundColor() template.CSS {
 	return template.CSS("#000")
 }
 
-// NewLabel creates new label of repository.
-func NewLabel(l *Label) error {
-	_, err := x.Insert(l)
+// NewLabels creates new label(s) for a repository.
+func NewLabels(labels ...*Label) error {
+	_, err := x.Insert(labels)
 	return err
 }
 
@@ -103,13 +138,13 @@ func GetLabelInRepoByID(repoID, labelID int64) (*Label, error) {
 // it silently ignores label IDs that are not belong to the repository.
 func GetLabelsInRepoByIDs(repoID int64, labelIDs []int64) ([]*Label, error) {
 	labels := make([]*Label, 0, len(labelIDs))
-	return labels, x.Where("repo_id = ?", repoID).In("id", base.Int64sToStrings(labelIDs)).Find(&labels)
+	return labels, x.Where("repo_id = ?", repoID).In("id", base.Int64sToStrings(labelIDs)).Asc("name").Find(&labels)
 }
 
 // GetLabelsByRepoID returns all labels that belong to given repository by ID.
 func GetLabelsByRepoID(repoID int64) ([]*Label, error) {
 	labels := make([]*Label, 0, 10)
-	return labels, x.Where("repo_id = ?", repoID).Find(&labels)
+	return labels, x.Where("repo_id = ?", repoID).Asc("name").Find(&labels)
 }
 
 func getLabelsByIssueID(e Engine, issueID int64) ([]*Label, error) {
@@ -126,7 +161,7 @@ func getLabelsByIssueID(e Engine, issueID int64) ([]*Label, error) {
 	}
 
 	labels := make([]*Label, 0, len(labelIDs))
-	return labels, e.Where("id > 0").In("id", base.Int64sToStrings(labelIDs)).Find(&labels)
+	return labels, e.Where("id > 0").In("id", base.Int64sToStrings(labelIDs)).Asc("name").Find(&labels)
 }
 
 // GetLabelsByIssueID returns all labels that belong to given issue by ID.

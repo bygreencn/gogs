@@ -52,6 +52,9 @@ func NewFuncMap() []template.FuncMap {
 		"DisableGravatar": func() bool {
 			return setting.DisableGravatar
 		},
+		"ShowFooterTemplateLoadTime": func() bool {
+			return setting.ShowFooterTemplateLoadTime
+		},
 		"LoadTimes": func(startTime time.Time) string {
 			return fmt.Sprint(time.Since(startTime).Nanoseconds()/1e6) + "ms"
 		},
@@ -73,13 +76,6 @@ func NewFuncMap() []template.FuncMap {
 			return t.Format("Jan 02, 2006")
 		},
 		"List": List,
-		"Mail2Domain": func(mail string) string {
-			if !strings.Contains(mail, "@") {
-				return "try.gogs.io"
-			}
-
-			return strings.SplitN(mail, "@", 2)[1]
-		},
 		"SubStr": func(str string, start, length int) string {
 			if len(str) == 0 {
 				return ""
@@ -93,6 +89,7 @@ func NewFuncMap() []template.FuncMap {
 			}
 			return str[start:end]
 		},
+		"EllipsisString":    base.EllipsisString,
 		"DiffTypeToStr":     DiffTypeToStr,
 		"DiffLineTypeToStr": DiffLineTypeToStr,
 		"Sha1":              Sha1,

@@ -166,7 +166,6 @@ func Issues(ctx *context.Context) {
 	pager := paginater.New(total, setting.UI.IssuePagingNum, page, 5)
 	ctx.Data["Page"] = pager
 
-	// Get issues.
 	issues, err := models.Issues(&models.IssuesOptions{
 		UserID:      uid,
 		AssigneeID:  assigneeID,
@@ -448,7 +447,6 @@ func UploadIssueAttachment(ctx *context.Context) {
 		return
 	}
 
-	allowedTypes := strings.Split(setting.AttachmentAllowedTypes, ",")
 	file, header, err := ctx.Req.FormFile("file")
 	if err != nil {
 		ctx.Error(500, fmt.Sprintf("FormFile: %v", err))
@@ -463,6 +461,7 @@ func UploadIssueAttachment(ctx *context.Context) {
 	}
 	fileType := http.DetectContentType(buf)
 
+	allowedTypes := strings.Split(setting.AttachmentAllowedTypes, ",")
 	allowed := false
 	for _, t := range allowedTypes {
 		t := strings.Trim(t, " ")
@@ -491,7 +490,6 @@ func UploadIssueAttachment(ctx *context.Context) {
 
 func ViewIssue(ctx *context.Context) {
 	ctx.Data["RequireHighlightJS"] = true
-	ctx.Data["RequireSimpleMDE"] = true
 	ctx.Data["RequireDropzone"] = true
 	renderAttachmentSettings(ctx)
 
@@ -796,7 +794,7 @@ func UpdateIssueAssignee(ctx *context.Context) {
 func NewComment(ctx *context.Context, form auth.CreateCommentForm) {
 	issue, err := models.GetIssueByIndex(ctx.Repo.Repository.ID, ctx.ParamsInt64(":index"))
 	if err != nil {
-		ctx.HandleError("GetIssueByIndex", models.IsErrIssueNotExist, err, 404)
+		ctx.NotFoundOrServerError("GetIssueByIndex", models.IsErrIssueNotExist, err)
 		return
 	}
 
@@ -882,7 +880,7 @@ func NewComment(ctx *context.Context, form auth.CreateCommentForm) {
 func UpdateCommentContent(ctx *context.Context) {
 	comment, err := models.GetCommentByID(ctx.ParamsInt64(":id"))
 	if err != nil {
-		ctx.HandleError("GetCommentByID", models.IsErrCommentNotExist, err, 404)
+		ctx.NotFoundOrServerError("GetCommentByID", models.IsErrCommentNotExist, err)
 		return
 	}
 
@@ -914,7 +912,7 @@ func UpdateCommentContent(ctx *context.Context) {
 func DeleteComment(ctx *context.Context) {
 	comment, err := models.GetCommentByID(ctx.ParamsInt64(":id"))
 	if err != nil {
-		ctx.HandleError("GetCommentByID", models.IsErrCommentNotExist, err, 404)
+		ctx.NotFoundOrServerError("GetCommentByID", models.IsErrCommentNotExist, err)
 		return
 	}
 
@@ -939,7 +937,35 @@ func Labels(ctx *context.Context) {
 	ctx.Data["PageIsIssueList"] = true
 	ctx.Data["PageIsLabels"] = true
 	ctx.Data["RequireMinicolors"] = true
+	ctx.Data["LabelTemplates"] = models.LabelTemplates
 	ctx.HTML(200, LABELS)
+}
+
+func InitializeLabels(ctx *context.Context, form auth.InitializeLabelsForm) {
+	if ctx.HasError() {
+		ctx.Redirect(ctx.Repo.RepoLink + "/labels")
+		return
+	}
+	list, err := models.GetLabelTemplateFile(form.TemplateName)
+	if err != nil {
+		ctx.Flash.Error(ctx.Tr("repo.issues.label_templates.fail_to_load_file", form.TemplateName, err))
+		ctx.Redirect(ctx.Repo.RepoLink + "/labels")
+		return
+	}
+
+	labels := make([]*models.Label, len(list))
+	for i := 0; i < len(list); i++ {
+		labels[i] = &models.Label{
+			RepoID: ctx.Repo.Repository.ID,
+			Name:   list[i][0],
+			Color:  list[i][1],
+		}
+	}
+	if err := models.NewLabels(labels...); err != nil {
+		ctx.Handle(500, "NewLabels", err)
+		return
+	}
+	ctx.Redirect(ctx.Repo.RepoLink + "/labels")
 }
 
 func NewLabel(ctx *context.Context, form auth.CreateLabelForm) {
@@ -957,7 +983,7 @@ func NewLabel(ctx *context.Context, form auth.CreateLabelForm) {
 		Name:   form.Title,
 		Color:  form.Color,
 	}
-	if err := models.NewLabel(l); err != nil {
+	if err := models.NewLabels(l); err != nil {
 		ctx.Handle(500, "NewLabel", err)
 		return
 	}

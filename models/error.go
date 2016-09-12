@@ -526,7 +526,8 @@ func (err ErrPullRequestNotExist) Error() string {
 //         \/             \/      \/     \/     \/
 
 type ErrCommentNotExist struct {
-	ID int64
+	ID      int64
+	IssueID int64
 }
 
 func IsErrCommentNotExist(err error) bool {
@@ -535,7 +536,7 @@ func IsErrCommentNotExist(err error) bool {
 }
 
 func (err ErrCommentNotExist) Error() string {
-	return fmt.Sprintf("comment does not exist [id: %d]", err.ID)
+	return fmt.Sprintf("comment does not exist [id: %d, issue_id: %d]", err.ID, err.IssueID)
 }
 
 // .____          ___.          .__
@@ -601,24 +602,50 @@ func (err ErrAttachmentNotExist) Error() string {
 	return fmt.Sprintf("attachment does not exist [id: %d, uuid: %s]", err.ID, err.UUID)
 }
 
-//    _____          __  .__                   __  .__               __  .__
-//   /  _  \  __ ___/  |_|  |__   ____   _____/  |_|__| ____ _____ _/  |_|__| ____   ____
-//  /  /_\  \|  |  \   __\  |  \_/ __ \ /    \   __\  |/ ___\\__  \\   __\  |/  _ \ /    \
-// /    |    \  |  /|  | |   Y  \  ___/|   |  \  | |  \  \___ / __ \|  | |  (  <_> )   |  \
-// \____|__  /____/ |__| |___|  /\___  >___|  /__| |__|\___  >____  /__| |__|\____/|___|  /
-//         \/                 \/     \/     \/             \/     \/                    \/
+// .____                 .__           _________
+// |    |    ____   ____ |__| ____    /   _____/ ____  __ _________   ____  ____
+// |    |   /  _ \ / ___\|  |/    \   \_____  \ /  _ \|  |  \_  __ \_/ ___\/ __ \
+// |    |__(  <_> ) /_/  >  |   |  \  /        (  <_> )  |  /|  | \/\  \__\  ___/
+// |_______ \____/\___  /|__|___|  / /_______  /\____/|____/ |__|    \___  >___  >
+//         \/    /_____/         \/          \/                          \/    \/
 
-type ErrAuthenticationNotExist struct {
+type ErrLoginSourceNotExist struct {
 	ID int64
 }
 
-func IsErrAuthenticationNotExist(err error) bool {
-	_, ok := err.(ErrAuthenticationNotExist)
+func IsErrLoginSourceNotExist(err error) bool {
+	_, ok := err.(ErrLoginSourceNotExist)
 	return ok
 }
 
-func (err ErrAuthenticationNotExist) Error() string {
-	return fmt.Sprintf("authentication does not exist [id: %d]", err.ID)
+func (err ErrLoginSourceNotExist) Error() string {
+	return fmt.Sprintf("login source does not exist [id: %d]", err.ID)
+}
+
+type ErrLoginSourceAlreadyExist struct {
+	Name string
+}
+
+func IsErrLoginSourceAlreadyExist(err error) bool {
+	_, ok := err.(ErrLoginSourceAlreadyExist)
+	return ok
+}
+
+func (err ErrLoginSourceAlreadyExist) Error() string {
+	return fmt.Sprintf("login source already exists [name: %s]", err.Name)
+}
+
+type ErrLoginSourceInUse struct {
+	ID int64
+}
+
+func IsErrLoginSourceInUse(err error) bool {
+	_, ok := err.(ErrLoginSourceInUse)
+	return ok
+}
+
+func (err ErrLoginSourceInUse) Error() string {
+	return fmt.Sprintf("login source is still used by some users [id: %d]", err.ID)
 }
 
 // ___________
@@ -651,10 +678,8 @@ func (err ErrTeamAlreadyExist) Error() string {
 //
 
 type ErrUploadNotExist struct {
-	ID     int64
-	UUID   string
-	UserID int64
-	RepoID int64
+	ID   int64
+	UUID string
 }
 
 func IsErrUploadNotExist(err error) bool {
@@ -663,5 +688,5 @@ func IsErrUploadNotExist(err error) bool {
 }
 
 func (err ErrUploadNotExist) Error() string {
-	return fmt.Sprintf("attachment does not exist [id: %d, uuid: %s, user_id: %d, repo_id: %d]", err.ID, err.UUID, err.UserID, err.RepoID)
+	return fmt.Sprintf("attachment does not exist [id: %d, uuid: %s]", err.ID, err.UUID)
 }

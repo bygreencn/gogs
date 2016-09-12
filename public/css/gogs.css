@@ -1198,7 +1198,8 @@ footer .ui.language .menu {
 }
 .repository #clone-panel {
   margin-top: -8px;
-  width: 100%;
+  margin-left: 5px;
+  width: 350px;
 }
 .repository #clone-panel input {
   border-radius: 0;
@@ -1227,10 +1228,10 @@ footer .ui.language .menu {
 .repository.file.list #file-buttons {
   font-weight: normal;
   margin-top: -3px;
-  padding-right: 20px;
 }
 .repository.file.list #file-buttons .ui.button {
   padding: 8px 10px;
+  font-weight: normal;
 }
 .repository.file.list #repo-files-table thead th {
   padding-top: 8px;
@@ -1345,7 +1346,6 @@ footer .ui.language .menu {
 .repository.file.list #file-content .code-view .lines-code ol li,
 .repository.file.list #file-content .code-view .lines-num .hljs li,
 .repository.file.list #file-content .code-view .lines-code .hljs li {
-  padding-left: 5px;
   display: inline-block;
   width: 100%;
 }
@@ -1356,6 +1356,14 @@ footer .ui.language .menu {
 .repository.file.list #file-content .code-view .lines-num .hljs li.active,
 .repository.file.list #file-content .code-view .lines-code .hljs li.active {
   background: #ffffdd;
+}
+.repository.file.list #file-content .code-view .lines-num pre li:before,
+.repository.file.list #file-content .code-view .lines-code pre li:before,
+.repository.file.list #file-content .code-view .lines-num ol li:before,
+.repository.file.list #file-content .code-view .lines-code ol li:before,
+.repository.file.list #file-content .code-view .lines-num .hljs li:before,
+.repository.file.list #file-content .code-view .lines-code .hljs li:before {
+  content: ' ';
 }
 .repository.file.list .sidebar {
   padding-left: 0;
@@ -2270,13 +2278,13 @@ footer .ui.language .menu {
 .page.buttons {
   padding-top: 15px;
 }
-.ui.comments .dropzone {
+.ui.form .dropzone {
   width: 100%;
   margin-bottom: 10px;
   border: 2px dashed #0087F7;
   box-shadow: none!important;
 }
-.ui.comments .dropzone .dz-error-message {
+.ui.form .dropzone .dz-error-message {
   top: 140px;
 }
 .settings .content {
@@ -2645,9 +2653,6 @@ footer .ui.language .menu {
 .user.settings .email.list .item:not(:first-child) .button {
   margin-top: -10px;
 }
-.user.profile .ui.card #profile-avatar {
-  height: 290px;
-}
 .user.profile .ui.card .username {
   display: block;
 }
@@ -2735,6 +2740,10 @@ footer .ui.language .menu {
 .dashboard.feeds .ui.right .head.menu .item.active,
 .dashboard.issues .ui.right .head.menu .item.active {
   color: #d9453d;
+}
+.feeds .news > .ui.grid {
+  margin-left: auto;
+  margin-right: auto;
 }
 .feeds .news .ui.avatar {
   margin-top: 13px;

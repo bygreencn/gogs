@@ -9,9 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"io/ioutil"
-	"mime/multipart"
 	"os"
 	"os/exec"
 	"path"
@@ -29,7 +27,6 @@ import (
 
 	git "github.com/gogits/git-module"
 	api "github.com/gogits/go-gogs-client"
-	gouuid "github.com/satori/go.uuid"
 
 	"github.com/gogits/gogs/modules/bindata"
 	"github.com/gogits/gogs/modules/log"
@@ -43,7 +40,7 @@ const (
 	_TPL_UPDATE_HOOK = "#!/usr/bin/env %s\n%s update $1 $2 $3 --config='%s'\n"
 )
 
-var repoWorkingPool = sync.NewSingleInstancePool()
+var repoWorkingPool = sync.NewExclusivePool()
 
 var (
 	ErrRepoFileNotExist  = errors.New("Repository file does not exist")
@@ -54,7 +51,7 @@ var (
 )
 
 var (
-	Gitignores, Licenses, Readmes []string
+	Gitignores, Licenses, Readmes, LabelTemplates []string
 
 	// Maximum items per page in forks, watchers and stars of a repo
 	ItemsPerPage = 40
@@ -62,8 +59,8 @@ var (
 
 func LoadRepoConfig() {
 	// Load .gitignore and license files and readme templates.
-	types := []string{"gitignore", "license", "readme"}
-	typeFiles := make([][]string, 3)
+	types := []string{"gitignore", "license", "readme", "label"}
+	typeFiles := make([][]string, 4)
 	for i, t := range types {
 		files, err := bindata.AssetDir("conf/" + t)
 		if err != nil {
@@ -88,9 +85,25 @@ func LoadRepoConfig() {
 	Gitignores = typeFiles[0]
 	Licenses = typeFiles[1]
 	Readmes = typeFiles[2]
+	LabelTemplates = typeFiles[3]
 	sort.Strings(Gitignores)
 	sort.Strings(Licenses)
 	sort.Strings(Readmes)
+	sort.Strings(LabelTemplates)
+
+	// Filter out invalid names and promote preferred licenses.
+	sortedLicenses := make([]string, 0, len(Licenses))
+	for _, name := range setting.Repository.PreferredLicenses {
+		if com.IsSliceContainsStr(Licenses, name) {
+			sortedLicenses = append(sortedLicenses, name)
+		}
+	}
+	for _, name := range Licenses {
+		if !com.IsSliceContainsStr(setting.Repository.PreferredLicenses, name) {
+			sortedLicenses = append(sortedLicenses, name)
+		}
+	}
+	Licenses = sortedLicenses
 }
 
 func NewRepoContext() {
@@ -368,7 +381,7 @@ func (repo *Repository) IssueStats(uid int64, filterMode int, isPull bool) (int6
 }
 
 func (repo *Repository) GetMirror() (err error) {
-	repo.Mirror, err = GetMirror(repo.ID)
+	repo.Mirror, err = GetMirrorByRepoID(repo.ID)
 	return err
 }
 
@@ -427,6 +440,11 @@ func (repo *Repository) CanEnablePulls() bool {
 // AllowPulls returns true if repository meets the requirements of accepting pulls and has them enabled.
 func (repo *Repository) AllowsPulls() bool {
 	return repo.CanEnablePulls() && repo.EnablePulls
+}
+
+// CanEnableEditor returns true if repository meets the requirements of web editor.
+func (repo *Repository) CanEnableEditor() bool {
+	return !repo.IsMirror
 }
 
 // FIXME: should have a mutex to prevent producing same index for two issues that are created
@@ -547,143 +565,13 @@ func (repo *Repository) cloneLink(isWiki bool) *CloneLink {
 	} else {
 		cl.SSH = fmt.Sprintf("%s@%s:%s/%s.git", setting.RunUser, setting.SSH.Domain, repo.Owner.Name, repoName)
 	}
-	cl.HTTPS = ComposeHTTPSCloneURL(repo.Owner.Name, repo.Name)
+	cl.HTTPS = ComposeHTTPSCloneURL(repo.Owner.Name, repoName)
 	return cl
 }
 
 // CloneLink returns clone URLs of repository.
 func (repo *Repository) CloneLink() (cl *CloneLink) {
 	return repo.cloneLink(false)
-}
-
-// Mirror represents a mirror information of repository.
-type Mirror struct {
-	ID          int64 `xorm:"pk autoincr"`
-	RepoID      int64
-	Repo        *Repository `xorm:"-"`
-	Interval    int         // Hour.
-	EnablePrune bool        `xorm:"NOT NULL DEFAULT true"`
-
-	Updated        time.Time `xorm:"-"`
-	UpdatedUnix    int64
-	NextUpdate     time.Time `xorm:"-"`
-	NextUpdateUnix int64
-
-	address string `xorm:"-"`
-}
-
-func (m *Mirror) BeforeInsert() {
-	m.NextUpdateUnix = m.NextUpdate.Unix()
-}
-
-func (m *Mirror) BeforeUpdate() {
-	m.UpdatedUnix = time.Now().Unix()
-	m.NextUpdateUnix = m.NextUpdate.Unix()
-}
-
-func (m *Mirror) AfterSet(colName string, _ xorm.Cell) {
-	var err error
-	switch colName {
-	case "repo_id":
-		m.Repo, err = GetRepositoryByID(m.RepoID)
-		if err != nil {
-			log.Error(3, "GetRepositoryByID[%d]: %v", m.ID, err)
-		}
-	case "updated_unix":
-		m.Updated = time.Unix(m.UpdatedUnix, 0).Local()
-	case "next_updated_unix":
-		m.NextUpdate = time.Unix(m.NextUpdateUnix, 0).Local()
-	}
-}
-
-func (m *Mirror) readAddress() {
-	if len(m.address) > 0 {
-		return
-	}
-
-	cfg, err := ini.Load(m.Repo.GitConfigPath())
-	if err != nil {
-		log.Error(4, "Load: %v", err)
-		return
-	}
-	m.address = cfg.Section("remote \"origin\"").Key("url").Value()
-}
-
-// HandleCloneUserCredentials replaces user credentials from HTTP/HTTPS URL
-// with placeholder <credentials>.
-// It will fail for any other forms of clone addresses.
-func HandleCloneUserCredentials(url string, mosaics bool) string {
-	i := strings.Index(url, "@")
-	if i == -1 {
-		return url
-	}
-	start := strings.Index(url, "://")
-	if start == -1 {
-		return url
-	}
-	if mosaics {
-		return url[:start+3] + "<credentials>" + url[i:]
-	}
-	return url[:start+3] + url[i+1:]
-}
-
-// Address returns mirror address from Git repository config without credentials.
-func (m *Mirror) Address() string {
-	m.readAddress()
-	return HandleCloneUserCredentials(m.address, false)
-}
-
-// FullAddress returns mirror address from Git repository config.
-func (m *Mirror) FullAddress() string {
-	m.readAddress()
-	return m.address
-}
-
-// SaveAddress writes new address to Git repository config.
-func (m *Mirror) SaveAddress(addr string) error {
-	configPath := m.Repo.GitConfigPath()
-	cfg, err := ini.Load(configPath)
-	if err != nil {
-		return fmt.Errorf("Load: %v", err)
-	}
-
-	cfg.Section("remote \"origin\"").Key("url").SetValue(addr)
-	return cfg.SaveToIndent(configPath, "\t")
-}
-
-func getMirror(e Engine, repoId int64) (*Mirror, error) {
-	m := &Mirror{RepoID: repoId}
-	has, err := e.Get(m)
-	if err != nil {
-		return nil, err
-	} else if !has {
-		return nil, ErrMirrorNotExist
-	}
-	return m, nil
-}
-
-// GetMirror returns mirror object by given repository ID.
-func GetMirror(repoId int64) (*Mirror, error) {
-	return getMirror(x, repoId)
-}
-
-func updateMirror(e Engine, m *Mirror) error {
-	_, err := e.Id(m.ID).AllCols().Update(m)
-	return err
-}
-
-func UpdateMirror(m *Mirror) error {
-	return updateMirror(x, m)
-}
-
-func DeleteMirrorByRepoID(repoID int64) error {
-	_, err := x.Delete(&Mirror{RepoID: repoID})
-	return err
-}
-
-func createUpdateHook(repoPath string) error {
-	return git.SetUpdateHook(repoPath,
-		fmt.Sprintf(_TPL_UPDATE_HOOK, setting.ScriptType, "\""+setting.AppPath+"\"", setting.CustomConf))
 }
 
 type MigrateRepoOptions struct {
@@ -724,10 +612,6 @@ func MigrateRepository(u *User, opts MigrateRepoOptions) (*Repository, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// Clone to temprory path and do the init commit.
-	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("%d", time.Now().Nanosecond()))
-	os.MkdirAll(tmpDir, os.ModePerm)
 
 	repoPath := RepoPath(u.Name, opts.Name)
 	wikiPath := WikiPath(u.Name, opts.Name)
@@ -821,6 +705,11 @@ func cleanUpMigrateGitConfig(configPath string) error {
 	return nil
 }
 
+func createUpdateHook(repoPath string) error {
+	return git.SetUpdateHook(repoPath,
+		fmt.Sprintf(_TPL_UPDATE_HOOK, setting.ScriptType, "\""+setting.AppPath+"\"", setting.CustomConf))
+}
+
 // Finish migrating repository and/or wiki with things that don't need to be done for mirrors.
 func CleanUpMigrateInfo(repo *Repository) (*Repository, error) {
 	repoPath := repo.RepoPath()
@@ -857,7 +746,7 @@ func initRepoCommit(tmpPath string, sig *git.Signature) (err error) {
 	if _, stderr, err = process.ExecDir(-1,
 		tmpPath, fmt.Sprintf("initRepoCommit (git commit): %s", tmpPath),
 		"git", "commit", fmt.Sprintf("--author='%s <%s>'", sig.Name, sig.Email),
-		"-m", "initial commit"); err != nil {
+		"-m", "Initial commit"); err != nil {
 		return fmt.Errorf("git commit: %s", stderr)
 	}
 
@@ -1730,70 +1619,6 @@ const (
 	_CHECK_REPOs   = "check_repos"
 )
 
-// MirrorUpdate checks and updates mirror repositories.
-func MirrorUpdate() {
-	if taskStatusTable.IsRunning(_MIRROR_UPDATE) {
-		return
-	}
-	taskStatusTable.Start(_MIRROR_UPDATE)
-	defer taskStatusTable.Stop(_MIRROR_UPDATE)
-
-	log.Trace("Doing: MirrorUpdate")
-
-	mirrors := make([]*Mirror, 0, 10)
-	if err := x.Where("next_update_unix<=?", time.Now().Unix()).Iterate(new(Mirror), func(idx int, bean interface{}) error {
-		m := bean.(*Mirror)
-		if m.Repo == nil {
-			log.Error(4, "Disconnected mirror repository found: %d", m.ID)
-			return nil
-		}
-
-		repoPath := m.Repo.RepoPath()
-		wikiPath := m.Repo.WikiPath()
-		timeout := time.Duration(setting.Git.Timeout.Mirror) * time.Second
-
-		gitArgs := []string{"remote", "update"}
-		if m.EnablePrune {
-			gitArgs = append(gitArgs, "--prune")
-		}
-
-		if _, stderr, err := process.ExecDir(
-			timeout, repoPath, fmt.Sprintf("MirrorUpdate: %s", repoPath),
-			"git", gitArgs...); err != nil {
-			desc := fmt.Sprintf("Fail to update mirror repository(%s): %s", repoPath, stderr)
-			log.Error(4, desc)
-			if err = CreateRepositoryNotice(desc); err != nil {
-				log.Error(4, "CreateRepositoryNotice: %v", err)
-			}
-			return nil
-		}
-		if m.Repo.HasWiki() {
-			if _, stderr, err := process.ExecDir(
-				timeout, wikiPath, fmt.Sprintf("MirrorUpdate: %s", wikiPath),
-				"git", "remote", "update", "--prune"); err != nil {
-				desc := fmt.Sprintf("Fail to update mirror wiki repository(%s): %s", wikiPath, stderr)
-				log.Error(4, desc)
-				if err = CreateRepositoryNotice(desc); err != nil {
-					log.Error(4, "CreateRepositoryNotice: %v", err)
-				}
-				return nil
-			}
-		}
-
-		m.NextUpdate = time.Now().Add(time.Duration(m.Interval) * time.Hour)
-		mirrors = append(mirrors, m)
-		return nil
-	}); err != nil {
-		log.Error(4, "MirrorUpdate: %v", err)
-	}
-
-	for i := range mirrors {
-		if err := UpdateMirror(mirrors[i]); err != nil {
-			log.Error(4, "UpdateMirror[%d]: %v", mirrors[i].ID, err)
-		}
-	}
-}
-
 // GitFsck calls 'git fsck' to check repository health.
 func GitFsck() {
 	if taskStatusTable.IsRunning(_GIT_FSCK) {
@@ -2249,194 +2074,6 @@ func ForkRepository(u *User, oldRepo *Repository, name, desc string) (_ *Reposit
 func (repo *Repository) GetForks() ([]*Repository, error) {
 	forks := make([]*Repository, 0, repo.NumForks)
 	return forks, x.Find(&forks, &Repository{ForkID: repo.ID})
-}
-
-//  ____ ___        .__                    .___ ___________.___.__
-// |    |   \______ |  |   _________     __| _/ \_   _____/|   |  |   ____   ______
-// |    |   /\____ \|  |  /  _ \__  \   / __ |   |    __)  |   |  | _/ __ \ /  ___/
-// |    |  / |  |_> >  |_(  <_> ) __ \_/ /_/ |   |     \   |   |  |_\  ___/ \___ \
-// |______/  |   __/|____/\____(____  /\____ |   \___  /   |___|____/\___  >____  >
-//           |__|                   \/      \/       \/                  \/     \/
-//
-
-// uploadRepoFiles uploads new files to repository.
-func (repo *Repository) UploadRepoFiles(doer *User, oldBranchName, branchName, treePath, message string, uuids []string) (err error) {
-	repoWorkingPool.CheckIn(com.ToStr(repo.ID))
-	defer repoWorkingPool.CheckOut(com.ToStr(repo.ID))
-
-	localPath := repo.LocalCopyPath()
-
-	if err = discardLocalRepoBranchChanges(localPath, oldBranchName); err != nil {
-		return fmt.Errorf("discardLocalRepoChanges: %v", err)
-	} else if err = repo.UpdateLocalCopyBranch(oldBranchName); err != nil {
-		return fmt.Errorf("UpdateLocalCopyBranch: %v", err)
-	}
-
-	if oldBranchName != branchName {
-		repo.CheckoutNewBranch(oldBranchName, branchName)
-	}
-
-	dirPath := path.Join(localPath, treePath)
-	os.MkdirAll(dirPath, os.ModePerm)
-
-	// Copy uploaded files into repository.
-	for _, uuid := range uuids {
-		upload, err := getUpload(uuid, doer.ID, repo.ID)
-		if err != nil {
-			if IsErrUploadNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("getUpload[%s]: %v", uuid, err)
-		}
-		uuidPath := upload.LocalPath()
-		filePath := dirPath + "/" + upload.Name
-		if err := os.Rename(uuidPath, filePath); err != nil {
-			DeleteUpload(upload, true)
-			return fmt.Errorf("Rename[%s -> %s]: %v", uuidPath, filePath, err)
-		}
-		DeleteUpload(upload, false) // false because we have moved the file
-	}
-
-	if len(message) == 0 {
-		message = "Add files to '" + treePath + "'"
-	}
-
-	if err = git.AddChanges(localPath, true); err != nil {
-		return fmt.Errorf("AddChanges: %v", err)
-	} else if err = git.CommitChanges(localPath, message, doer.NewGitSig()); err != nil {
-		return fmt.Errorf("CommitChanges: %v", err)
-	} else if err = git.Push(localPath, "origin", branchName); err != nil {
-		return fmt.Errorf("Push: %v", err)
-	}
-
-	return nil
-}
-
-// Upload represent a uploaded file to a repo to be deleted when moved
-type Upload struct {
-	ID          int64  `xorm:"pk autoincr"`
-	UUID        string `xorm:"uuid UNIQUE"`
-	UID         int64  `xorm:"INDEX"`
-	RepoID      int64  `xorm:"INDEX"`
-	Name        string
-	Created     time.Time `xorm:"-"`
-	CreatedUnix int64
-}
-
-func (u *Upload) BeforeInsert() {
-	u.CreatedUnix = time.Now().UTC().Unix()
-}
-
-func (u *Upload) AfterSet(colName string, _ xorm.Cell) {
-	switch colName {
-	case "created_unix":
-		u.Created = time.Unix(u.CreatedUnix, 0).Local()
-	}
-}
-
-// UploadLocalPath returns where uploads is stored in local file system based on given UUID.
-func UploadLocalPath(uuid string) string {
-	return path.Join(setting.Repository.Upload.TempPath, uuid[0:1], uuid[1:2], uuid)
-}
-
-// LocalPath returns where uploads are temporarily stored in local file system.
-func (upload *Upload) LocalPath() string {
-	return UploadLocalPath(upload.UUID)
-}
-
-// NewUpload creates a new upload object.
-func NewUpload(name string, buf []byte, file multipart.File, userId, repoId int64) (_ *Upload, err error) {
-	up := &Upload{
-		UUID:   gouuid.NewV4().String(),
-		Name:   name,
-		UID:    userId,
-		RepoID: repoId,
-	}
-
-	if err = os.MkdirAll(path.Dir(up.LocalPath()), os.ModePerm); err != nil {
-		return nil, fmt.Errorf("MkdirAll: %v", err)
-	}
-
-	fw, err := os.Create(up.LocalPath())
-	if err != nil {
-		return nil, fmt.Errorf("Create: %v", err)
-	}
-	defer fw.Close()
-
-	if _, err = fw.Write(buf); err != nil {
-		return nil, fmt.Errorf("Write: %v", err)
-	} else if _, err = io.Copy(fw, file); err != nil {
-		return nil, fmt.Errorf("Copy: %v", err)
-	}
-
-	sess := x.NewSession()
-	defer sessionRelease(sess)
-	if err := sess.Begin(); err != nil {
-		return nil, err
-	}
-	if _, err := sess.Insert(up); err != nil {
-		return nil, err
-	}
-
-	return up, sess.Commit()
-}
-
-// RemoveUpload removes the file by UUID
-func RemoveUpload(uuid string, userId, repoId int64) (err error) {
-	sess := x.NewSession()
-	defer sessionRelease(sess)
-	if err := sess.Begin(); err != nil {
-		return err
-	}
-	upload, err := getUpload(uuid, userId, repoId)
-	if err != nil {
-		return fmt.Errorf("getUpload[%s]: %v", uuid, err)
-	}
-
-	if err := DeleteUpload(upload, true); err != nil {
-		return fmt.Errorf("DeleteUpload[%s]: %v", uuid, err)
-	}
-
-	return nil
-}
-
-func getUpload(uuid string, userID, repoID int64) (*Upload, error) {
-	up := &Upload{UUID: uuid, UID: userID, RepoID: repoID}
-	has, err := x.Get(up)
-	if err != nil {
-		return nil, err
-	} else if !has {
-		return nil, ErrUploadNotExist{0, uuid, userID, repoID}
-	}
-	return up, nil
-}
-
-// GetUpload returns Upload by given UUID.
-func GetUpload(uuid string, userId, repoId int64) (*Upload, error) {
-	return getUpload(uuid, userId, repoId)
-}
-
-// DeleteUpload deletes the given upload
-func DeleteUpload(u *Upload, remove bool) error {
-	_, err := DeleteUploads([]*Upload{u}, remove)
-	return err
-}
-
-// DeleteUploads deletes the given uploads
-func DeleteUploads(uploads []*Upload, remove bool) (int, error) {
-	for i, u := range uploads {
-		if remove {
-			if err := os.Remove(u.LocalPath()); err != nil {
-				return i, err
-			}
-		}
-
-		if _, err := x.Delete(u); err != nil {
-			return i, err
-		}
-	}
-
-	return len(uploads), nil
 }
 
 // __________                             .__

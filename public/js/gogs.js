@@ -509,7 +509,7 @@ function initRepository() {
 
         // Change status
         var $statusButton = $('#status-button');
-        $('#edit_area').keyup(function () {
+        $('#comment-form .edit_area').keyup(function () {
             if ($(this).val().length == 0) {
                 $statusButton.text($statusButton.data('status'))
             } else {
@@ -616,29 +616,6 @@ function initWikiForm() {
     }
 }
 
-function initIssueForm() {
-    var $editArea = $('.repository.issue textarea.edit_area');
-    if ($editArea.length > 0) {
-        $editArea.each(function (i, edit_area) {
-            new SimpleMDE({
-                autoDownloadFontAwesome: false,
-                element: edit_area[0],
-                forceSync: true,
-                renderingConfig: {
-                    singleLineBreaks: false
-                },
-                indentWithTabs: false,
-                tabSize: 4,
-                spellChecker: false,
-                toolbar: ["bold", "italic", "strikethrough", "|",
-                    "code", "quote", "|",
-                    "unordered-list", "ordered-list", "|",
-                    "link", "image", "table"]
-            })
-        });
-    }
-}
-
 var simpleMDEditor;
 var codeMirrorEditor;
 
@@ -737,6 +714,16 @@ function setCodeMirror($editArea) {
 }
 
 function initEditor() {
+    $('.js-quick-pull-choice-option').change(function () {
+        if ($(this).val() == 'commit-to-new-branch') {
+            $('.quick-pull-branch-name').show();
+            $('.quick-pull-branch-name input').prop('required',true);
+        } else {
+            $('.quick-pull-branch-name').hide();
+            $('.quick-pull-branch-name input').prop('required',false);
+        }
+    });
+
     var $editFilename = $("#file-name");
     $editFilename.keyup(function (e) {
         var $section = $('.breadcrumb span.section');
@@ -840,17 +827,35 @@ function initEditor() {
         else {
             codeMirrorEditor.setOption("lineWrapping", false);
         }
-    }).trigger('keyup');
 
-
-    $('.js-quick-pull-choice-option').change(function () {
-        if ($(this).val() == 'commit-to-new-branch') {
-            $('.quick-pull-branch-name').show();
-        } else {
-            $('.quick-pull-branch-name').hide();
+        // get the filename without any folder
+        var value = $editFilename.val();
+        if (value.length === 0) {
+            return;
         }
-    });
+        value = value.split('/');
+        value = value[value.length - 1];
 
+        $.getJSON($editFilename.data('ec-url-prefix')+value, function(editorconfig) {
+            if (editorconfig.indent_style === 'tab') {
+                codeMirrorEditor.setOption("indentWithTabs", true);
+                codeMirrorEditor.setOption('extraKeys', {});
+            } else {
+                codeMirrorEditor.setOption("indentWithTabs", false);
+                // required because CodeMirror doesn't seems to use spaces correctly for {"indentWithTabs": false}:
+                // - https://github.com/codemirror/CodeMirror/issues/988
+                // - https://codemirror.net/doc/manual.html#keymaps
+                codeMirrorEditor.setOption('extraKeys', {
+                    Tab: function(cm) {
+                        var spaces = Array(parseInt(cm.getOption("indentUnit")) + 1).join(" ");
+                        cm.replaceSelection(spaces);
+                    }
+                });
+            }
+            codeMirrorEditor.setOption("indentUnit", editorconfig.indent_size || 4);
+            codeMirrorEditor.setOption("tabSize", editorconfig.tab_width || 4);
+        });
+    }).trigger('keyup');
 }
 
 function initOrganization() {
@@ -1365,7 +1370,6 @@ $(document).ready(function () {
     initInstall();
     initRepository();
     initWikiForm();
-    initIssueForm();
     initEditForm();
     initEditor();
     initOrganization();

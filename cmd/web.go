@@ -15,7 +15,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/codegangsta/cli"
 	"github.com/go-macaron/binding"
 	"github.com/go-macaron/cache"
 	"github.com/go-macaron/captcha"
@@ -26,6 +25,7 @@ import (
 	"github.com/go-macaron/toolbox"
 	"github.com/go-xorm/xorm"
 	"github.com/mcuadros/go-version"
+	"github.com/urfave/cli"
 	"gopkg.in/ini.v1"
 	"gopkg.in/macaron.v1"
 
@@ -73,8 +73,13 @@ func checkVersion() {
 	if err != nil {
 		log.Fatal(4, "Fail to read 'templates/.VERSION': %v", err)
 	}
-	if string(data) != setting.AppVer {
-		log.Fatal(4, "Binary and template file version does not match, did you forget to recompile?")
+	tplVer := string(data)
+	if tplVer != setting.AppVer {
+		if version.Compare(tplVer, setting.AppVer, ">") {
+			log.Fatal(4, "Binary version is lower than template file version, did you forget to recompile Gogs?")
+		} else {
+			log.Fatal(4, "Binary version is higher than template file version, did you forget to update template files?")
+		}
 	}
 
 	// Check dependency version.
@@ -88,7 +93,7 @@ func checkVersion() {
 		{"github.com/go-macaron/toolbox", toolbox.Version, "0.1.0"},
 		{"gopkg.in/ini.v1", ini.Version, "1.8.4"},
 		{"gopkg.in/macaron.v1", macaron.Version, "1.1.7"},
-		{"github.com/gogits/git-module", git.Version, "0.3.8"},
+		{"github.com/gogits/git-module", git.Version, "0.4.1"},
 		{"github.com/gogits/go-gogs-client", gogs.Version, "0.12.1"},
 	}
 	for _, c := range checkers {
@@ -209,6 +214,7 @@ func runWeb(ctx *cli.Context) error {
 		})
 		m.Get("/repos", routers.ExploreRepos)
 		m.Get("/users", routers.ExploreUsers)
+		m.Get("/organizations", routers.ExploreOrganizations)
 	}, ignSignIn)
 	m.Combo("/install", routers.InstallInit).Get(routers.Install).
 		Post(bindIgnErr(auth.InstallForm{}), routers.InstallPost)
@@ -477,7 +483,8 @@ func runWeb(ctx *cli.Context) error {
 			m.Post("/new", bindIgnErr(auth.CreateLabelForm{}), repo.NewLabel)
 			m.Post("/edit", bindIgnErr(auth.CreateLabelForm{}), repo.UpdateLabel)
 			m.Post("/delete", repo.DeleteLabel)
-		}, repo.MustEnableIssues, reqRepoWriter, context.RepoRef())
+			m.Post("/initialize", bindIgnErr(auth.InitializeLabelsForm{}), repo.InitializeLabels)
+		}, reqRepoWriter, context.RepoRef())
 		m.Group("/milestones", func() {
 			m.Combo("/new").Get(repo.NewMilestone).
 				Post(bindIgnErr(auth.CreateMilestoneForm{}), repo.NewMilestonePost)
@@ -485,15 +492,31 @@ func runWeb(ctx *cli.Context) error {
 			m.Post("/:id/edit", bindIgnErr(auth.CreateMilestoneForm{}), repo.EditMilestonePost)
 			m.Get("/:id/:action", repo.ChangeMilestonStatus)
 			m.Post("/delete", repo.DeleteMilestone)
-		}, repo.MustEnableIssues, reqRepoWriter, context.RepoRef())
+		}, reqRepoWriter, context.RepoRef())
 
 		m.Group("/releases", func() {
 			m.Get("/new", repo.NewRelease)
 			m.Post("/new", bindIgnErr(auth.NewReleaseForm{}), repo.NewReleasePost)
-			m.Get("/edit/*", repo.EditRelease)
-			m.Post("/edit/*", bindIgnErr(auth.EditReleaseForm{}), repo.EditReleasePost)
 			m.Post("/delete", repo.DeleteRelease)
 		}, reqRepoWriter, context.RepoRef())
+
+		m.Group("/releases", func() {
+			m.Get("/edit/*", repo.EditRelease)
+			m.Post("/edit/*", bindIgnErr(auth.EditReleaseForm{}), repo.EditReleasePost)
+		}, reqRepoWriter, func(ctx *context.Context) {
+			var err error
+			ctx.Repo.Commit, err = ctx.Repo.GitRepo.GetBranchCommit(ctx.Repo.Repository.DefaultBranch)
+			if err != nil {
+				ctx.Handle(500, "GetBranchCommit", err)
+				return
+			}
+			ctx.Repo.CommitsCount, err = ctx.Repo.Commit.CommitsCount()
+			if err != nil {
+				ctx.Handle(500, "CommitsCount", err)
+				return
+			}
+			ctx.Data["CommitsCount"] = ctx.Repo.CommitsCount
+		})
 
 		m.Combo("/compare/*", repo.MustAllowPulls).Get(repo.CompareAndPullRequest).
 			Post(bindIgnErr(auth.CreateIssueForm{}), repo.CompareAndPullRequestPost)
@@ -504,13 +527,22 @@ func runWeb(ctx *cli.Context) error {
 			m.Combo("/_new/*").Get(repo.NewFile).
 				Post(bindIgnErr(auth.EditRepoFileForm{}), repo.NewFilePost)
 			m.Post("/_preview/*", bindIgnErr(auth.EditPreviewDiffForm{}), repo.DiffPreviewPost)
-			m.Combo("/_upload/*").Get(repo.UploadFile).
-				Post(bindIgnErr(auth.UploadRepoFileForm{}), repo.UploadFilePost)
-			m.Post("/_delete/*", bindIgnErr(auth.DeleteRepoFileForm{}), repo.DeleteFilePost)
-			// m.Post("/upload-file", repo.UploadFileToServer)
-			// m.Post("/upload-remove", bindIgnErr(auth.RemoveUploadFileForm{}), repo.RemoveUploadFileFromServer)
+			m.Combo("/_delete/*").Get(repo.DeleteFile).
+				Post(bindIgnErr(auth.DeleteRepoFileForm{}), repo.DeleteFilePost)
+
+			m.Group("", func() {
+				m.Combo("/_upload/*").Get(repo.UploadFile).
+					Post(bindIgnErr(auth.UploadRepoFileForm{}), repo.UploadFilePost)
+				m.Post("/upload-file", repo.UploadFileToServer)
+				m.Post("/upload-remove", bindIgnErr(auth.RemoveUploadFileForm{}), repo.RemoveUploadFileFromServer)
+			}, func(ctx *context.Context) {
+				if !setting.Repository.Upload.Enabled {
+					ctx.Handle(404, "", nil)
+					return
+				}
+			})
 		}, reqRepoWriter, context.RepoRef(), func(ctx *context.Context) {
-			if ctx.Repo.IsViewCommit {
+			if !ctx.Repo.Repository.CanEnableEditor() || ctx.Repo.IsViewCommit {
 				ctx.Handle(404, "", nil)
 				return
 			}

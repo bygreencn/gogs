@@ -220,6 +220,14 @@ func (f *CreateLabelForm) Validate(ctx *macaron.Context, errs binding.Errors) bi
 	return validate(errs, ctx.Data, f, ctx.Locale)
 }
 
+type InitializeLabelsForm struct {
+	TemplateName string `binding:"Required"`
+}
+
+func (f *InitializeLabelsForm) Validate(ctx *macaron.Context, errs binding.Errors) binding.Errors {
+	return validate(errs, ctx.Data, f, ctx.Locale)
+}
+
 // __________       .__
 // \______   \ ____ |  |   ____ _____    ______ ____
 //  |       _// __ \|  | _/ __ \\__  \  /  ___// __ \
@@ -308,7 +316,7 @@ func (f *EditPreviewDiffForm) Validate(ctx *macaron.Context, errs binding.Errors
 //
 
 type UploadRepoFileForm struct {
-	TreeName      string `binding:MaxSize(500)"`
+	TreePath      string `binding:MaxSize(500)"`
 	CommitSummary string `binding:"MaxSize(100)`
 	CommitMessage string
 	CommitChoice  string `binding:"Required;MaxSize(50)"`
@@ -337,6 +345,9 @@ func (f *RemoveUploadFileForm) Validate(ctx *macaron.Context, errs binding.Error
 
 type DeleteRepoFileForm struct {
 	CommitSummary string `binding:"MaxSize(100)`
+	CommitMessage string
+	CommitChoice  string `binding:"Required;MaxSize(50)"`
+	NewBranchName string `binding:"AlphaDashDot;MaxSize(100)"`
 }
 
 func (f *DeleteRepoFileForm) Validate(ctx *macaron.Context, errs binding.Errors) binding.Errors {

@@ -11,13 +11,13 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 
 	"github.com/gogits/gogs/cmd"
 	"github.com/gogits/gogs/modules/setting"
 )
 
-const APP_VER = "0.9.85.0824"
+const APP_VER = "0.9.99.0903"
 
 func init() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
