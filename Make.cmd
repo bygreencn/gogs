@@ -1,50 +1,67 @@
 @echo off
 
-@set SYS_PATH=%PATH%
-@set GOGS_SOURCE_PATH=%CD% 
-@set MINGW64_I386_PATH=C:\mingw-w64\mingw32\bin
-@set MINGW64_X86X64_PATH=C:\mingw-w64\mingw64\bin
-@set GOROOT=c:\Go
-@set GOPATH=c:\Projects\Go
+@SET SYS_PATH=%PATH%
+@SET GOGS_SOURCE_PATH=%CD% 
+@SET MINGW64_I386_PATH=C:\mingw-w64\mingw32\bin
+@SET MINGW64_X86X64_PATH=C:\mingw-w64\mingw64\bin
+@SET GOGS_EXE=gogs.exe
 
-gopm get -u -g -v
+for /F "delims=\" %%i in ("%~dp0%") do (
+  SET GOGS_EXE=%%~nxi
+)
+@SET GOGS_EXE=%GOGS_EXE%.exe
+
+@echo ##### 1. Update Gogs...
+git fetch --all 
+git reset --hard origin/master
+
+@echo ##### 2. Update 3rdparty...
+REM gopm get -u -g -v
 go get -u -tags "sqlite cert" github.com/gogits/gogs
 
 cd %GOGS_SOURCE_PATH%
 go clean 
 go clean -tags "sqlite cert"
 
-@set CGO_ENABLED=1
+@SET CGO_ENABLED=1
 
-echo *************************************************************
-echo 1. Setting up environment for MinGW-w64 GCC for 32-bit...
-set PATH=%MINGW64_I386_PATH%;%GOPATH%\bin;%SYS_PATH%
-echo 2. Setting up environment for golang for 32-bit...
+@echo.
+@echo **************************************************
+@echo 1. Setting up environment for MinGW-w64 GCC for 32-bit...
+SET PATH=%MINGW64_I386_PATH%;%GOPATH%\bin;%SYS_PATH%
+@echo 2. Setting up environment for golang for 32-bit...
 cd %GOROOT%/src
-set GOOS=windows
-set GOARCH=386
-call make.bat --no-clean
+SET GOOS=windows
+SET GOARCH=386
+@echo 3. Building Compiler...
+call make.bat --no-clean || exit
+@echo 4. Building Gogs...
 cd %GOGS_SOURCE_PATH%
 go build -tags "sqlite cert" -v
-copy gogs.exe gogs-i386.exe
+@echo 5. Cleaning Env...
+copy %GOGS_EXE% gogs-i386.exe
 go clean -tags "sqlite cert" -v
+@echo **************************************************
 
-
-
-@echo *************************************************************
+@echo.
+@echo **************************************************
 @echo 1. Setting up environment for MinGW-w64 GCC for 64-bit...
-@set PATH=%MINGW64_X86X64_PATH%;%GOPATH%\bin;%SYS_PATH%
+@SET PATH=%MINGW64_X86X64_PATH%;%GOPATH%\bin;%SYS_PATH%
 @echo 2. Setting up environment for golang for 64-bit...
 cd %GOROOT%/src
-set GOOS=windows
-set GOARCH=amd64
+SET GOOS=windows
+SET GOARCH=amd64
+@echo 3. Building Compiler...
 call make.bat --no-clean
+@echo 4. Building Gogs...
 cd %GOGS_SOURCE_PATH%
 go build -tags "sqlite cert" -v
-copy gogs.exe gogs-x86_x64.exe
+@echo 5. Cleaning Env...
+copy %GOGS_EXE%  gogs-x86_x64.exe
 go clean -tags "sqlite cert" -v
+@echo **************************************************
 
-set PATH=%SYS_PATH%
+SET PATH=%SYS_PATH%
 echo on
 
 
