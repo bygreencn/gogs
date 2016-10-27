@@ -1,5 +1,8 @@
 @echo off
 
+@SET GOPATH=C:\Projects\Go
+@SET GOROOT=C:\Go
+
 @SET SYS_PATH=%PATH%
 @SET GOGS_SOURCE_PATH=%CD% 
 @SET MINGW64_I386_PATH=C:\mingw-w64\mingw32\bin
